@@ -106,12 +106,6 @@ if "projection_years" not in st.session_state:
 if "data_version" not in st.session_state:
     st.session_state.data_version = 0
 
-if "cumulative_expenses" not in st.session_state:
-    st.session_state.cumulative_expenses = False
-
-if "cumulative_goals" not in st.session_state:
-    st.session_state.cumulative_goals = False
-
 _v = st.session_state.data_version
 
 # ═══════════════════════════════════════════════════
@@ -172,8 +166,8 @@ def fifo_allocation():
     projections = goal_projections()
     results = []
     remaining = 0.0
-    use_cumulative = st.session_state.cumulative_goals
     for i, g in enumerate(projections):
+        use_cumulative = g.get("cumulative", False)
         cost = g["cumulative_cost"] if use_cumulative else g["inflated_cost"]
         if i == 0:
             pv = portfolio_at_year(g["target_year"])
@@ -266,6 +260,7 @@ def expense_income_chart():
 
     for i, e in enumerate(st.session_state.expenses):
         monthly_vals = [compound(e["monthly"], e["inflation"], y) for y in years]
+        cumulative = e.get("cumulative", False)
         if cumulative:
             # Annual cost each year, then running sum
             annual = [v * 12 for v in monthly_vals]
@@ -292,27 +287,19 @@ def expense_income_chart():
             hovertemplate="₹%{y:,.0f}<extra>Total Expenses</extra>"
         ))
 
+    any_cum_exp = any(e.get("cumulative", False) for e in st.session_state.expenses)
+
     if st.session_state.income:
         inc_monthly = [sum(compound(e["monthly"], e.get("growth", 5.0), y) for e in st.session_state.income) for y in years]
-        if cumulative:
-            inc_vals = []
-            running = 0
-            for v in inc_monthly:
-                running += v * 12
-                inc_vals.append(running)
-        else:
-            inc_vals = inc_monthly
         fig.add_trace(go.Scatter(
-            x=years, y=inc_vals, name="Total Income",
+            x=years, y=inc_monthly, name="Total Income",
             line=dict(color="#059669", width=3, dash="dot"),
             hovertemplate="₹%{y:,.0f}<extra>Total Income</extra>"
         ))
 
-    y_label = "₹ cumulative" if cumulative else "₹ / month"
-    title = "Cumulative Income vs Expenses" if cumulative else "Monthly Income vs Expenses Over Time"
     fig.update_layout(
-        title=title,
-        xaxis_title="Year", yaxis_title=y_label,
+        title="Monthly Income vs Expenses Over Time (★ = cumulative lines)",
+        xaxis_title="Year", yaxis_title="₹",
         hovermode="x unified", template=None,
         height=400, legend=dict(orientation="h", y=-0.15),
         margin=dict(l=60, r=20, t=50, b=60),
@@ -473,13 +460,6 @@ with tab_dash:
 
     # ── Goal allocation ──
     st.markdown("### Goal Coverage (FIFO Allocation)")
-    cost_toggle_col, _ = st.columns([1, 3])
-    with cost_toggle_col:
-        st.session_state.cumulative_goals = st.toggle(
-            "Cumulative (total cost over all years)",
-            value=st.session_state.cumulative_goals,
-            key=f"v{_v}_cum_toggle_dash"
-        )
 
     alloc = fifo_allocation()
     if not alloc:
@@ -488,7 +468,7 @@ with tab_dash:
         col_info, col_bar = st.columns([1, 2])
         with col_info:
             css = "badge-green" if g["pct"] >= 100 else ("badge-amber" if g["pct"] > 50 else "badge-red")
-            cost_label = "Cumulative cost" if st.session_state.cumulative_goals else "Inflated target"
+            cost_label = "Cumulative cost" if g.get("cumulative", False) else "Inflated target"
             st.markdown(f'**{g["name"]}** · Year {g["target_year"]}')
             st.markdown(f'{cost_label}: {fmt(g["display_cost"])} · Allocated: {fmt(g["allocated"])}')
             st.markdown(f'<span class="{css}">{g["status"]} ({g["pct"]}%)</span>', unsafe_allow_html=True)
@@ -527,11 +507,6 @@ with tab_dash:
 with tab_inc_exp:
     # Chart first (only if data exists)
     if st.session_state.expenses or st.session_state.income:
-        st.session_state.cumulative_expenses = st.toggle(
-            "Cumulative (total earned/spent over time)",
-            value=st.session_state.cumulative_expenses,
-            key=f"v{_v}_cum_toggle_exp"
-        )
         st.plotly_chart(expense_income_chart(), width="stretch")
 
     # ── Income ──
@@ -573,23 +548,29 @@ with tab_inc_exp:
     st.markdown("### 💸 Monthly Expenses")
     st.caption(f"Total: {fmt_full(total_monthly_expense())}/month · Avg inflation: {avg_inflation():.1f}%")
 
+    if st.session_state.expenses:
+        hc = st.columns([3, 2, 1.5, 1.5, 0.8])
+        hc[0].caption("Name")
+        hc[1].caption("Monthly ₹")
+        hc[2].caption("Inflation %")
+        hc[3].caption("Show cumulative")
+
     for i, e in enumerate(st.session_state.expenses):
-        cols = st.columns([3, 2, 1.5, 0.8])
+        cols = st.columns([3, 2, 1.5, 1.5, 0.8])
         with cols[0]:
             new_name = st.text_input("Name", value=e["name"], key=f"v{_v}_exp_name_{i}",
-                label_visibility="collapsed" if i > 0 else "visible",
-                placeholder="e.g. Rent, Groceries")
+                label_visibility="collapsed", placeholder="e.g. Rent, Groceries")
         with cols[1]:
             new_monthly = currency_input("Monthly ₹", e["monthly"], key=f"v{_v}_exp_monthly_{i}",
-                label_visibility="collapsed" if i > 0 else "visible")
+                label_visibility="collapsed")
         with cols[2]:
             new_inf = st.number_input("Inflation %", value=e["inflation"],
                 min_value=0.0, max_value=30.0, step=0.5,
-                key=f"v{_v}_exp_inf_{i}",
-                label_visibility="collapsed" if i > 0 else "visible")
+                key=f"v{_v}_exp_inf_{i}", label_visibility="collapsed")
         with cols[3]:
-            if i == 0:
-                st.markdown("<br>", unsafe_allow_html=True)
+            new_cum = st.checkbox("Cumulative", value=e.get("cumulative", False),
+                key=f"v{_v}_exp_cum_{i}", label_visibility="collapsed")
+        with cols[4]:
             if st.button("🗑️", key=f"v{_v}_del_exp_{i}"):
                 st.session_state.expenses.pop(i)
                 st.rerun()
@@ -597,6 +578,7 @@ with tab_inc_exp:
         st.session_state.expenses[i]["name"] = new_name
         st.session_state.expenses[i]["monthly"] = new_monthly
         st.session_state.expenses[i]["inflation"] = new_inf
+        st.session_state.expenses[i]["cumulative"] = new_cum
 
     if st.button("➕ Add Expense", key=f"v{_v}_add_exp"):
         st.session_state.expenses.append({"name": "", "monthly": 0, "inflation": 6.0})
@@ -651,34 +633,34 @@ with tab_inc_exp:
 with tab_goals:
     st.markdown("### 🎯 Financial Goals")
 
-    st.session_state.cumulative_goals = st.toggle(
-        "Cumulative (total cost summed over all years to target)",
-        value=st.session_state.cumulative_goals,
-        key=f"v{_v}_cum_toggle_goals"
-    )
+    if st.session_state.goals:
+        hc = st.columns([3, 2, 1.5, 1.5, 1.5, 0.8])
+        hc[0].caption("Goal Name")
+        hc[1].caption("Today's Cost ₹/yr")
+        hc[2].caption("Inflation %")
+        hc[3].caption("Target Year")
+        hc[4].caption("Show cumulative")
 
     for i, g in enumerate(st.session_state.goals):
-        cols = st.columns([3, 2, 1.5, 1.5, 0.8])
+        cols = st.columns([3, 2, 1.5, 1.5, 1.5, 0.8])
         with cols[0]:
             new_name = st.text_input("Goal Name", value=g["name"], key=f"v{_v}_goal_name_{i}",
-                label_visibility="collapsed" if i > 0 else "visible",
-                placeholder="e.g. Retirement, Home, Education")
+                label_visibility="collapsed", placeholder="e.g. Retirement, Home, Education")
         with cols[1]:
             new_cost = currency_input("Today's Cost ₹/yr", g["current_cost"], key=f"v{_v}_goal_cost_{i}",
-                label_visibility="collapsed" if i > 0 else "visible")
+                label_visibility="collapsed")
         with cols[2]:
             new_inf = st.number_input("Inflation %", value=g["inflation"],
                 min_value=0.0, max_value=30.0, step=0.5,
-                key=f"v{_v}_goal_inf_{i}",
-                label_visibility="collapsed" if i > 0 else "visible")
+                key=f"v{_v}_goal_inf_{i}", label_visibility="collapsed")
         with cols[3]:
             new_yr = st.number_input("Target Year", value=g["target_year"],
                 min_value=1, max_value=50,
-                key=f"v{_v}_goal_yr_{i}",
-                label_visibility="collapsed" if i > 0 else "visible")
+                key=f"v{_v}_goal_yr_{i}", label_visibility="collapsed")
         with cols[4]:
-            if i == 0:
-                st.markdown("<br>", unsafe_allow_html=True)
+            new_cum = st.checkbox("Cumulative", value=g.get("cumulative", False),
+                key=f"v{_v}_goal_cum_{i}", label_visibility="collapsed")
+        with cols[5]:
             if st.button("🗑️", key=f"v{_v}_del_goal_{i}"):
                 st.session_state.goals.pop(i)
                 st.rerun()
@@ -687,9 +669,10 @@ with tab_goals:
         st.session_state.goals[i]["current_cost"] = new_cost
         st.session_state.goals[i]["inflation"] = new_inf
         st.session_state.goals[i]["target_year"] = new_yr
+        st.session_state.goals[i]["cumulative"] = new_cum
 
     if st.button("➕ Add Goal", key=f"v{_v}_add_goal"):
-        st.session_state.goals.append({"name": "", "current_cost": 0, "inflation": 6.0, "target_year": 5})
+        st.session_state.goals.append({"name": "", "current_cost": 0, "inflation": 6.0, "target_year": 5, "cumulative": False})
         st.rerun()
 
     if st.session_state.goals:
@@ -704,7 +687,7 @@ with tab_goals:
                 "Year": f'Yr {g["target_year"]}',
                 "At Target Year": fmt(g["inflated_cost"]),
             }
-            if st.session_state.cumulative_goals:
+            if g.get("cumulative", False):
                 row["Cumulative Total"] = fmt(g["cumulative_cost"])
             proj_table.append(row)
         st.dataframe(proj_table, width="stretch", hide_index=True)
