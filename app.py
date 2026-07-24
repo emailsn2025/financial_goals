@@ -15,15 +15,15 @@ st.markdown("""
 <style>
     .block-container { padding-top: 2rem; }
     div[data-testid="stMetric"] {
-        background: #f8fafc;
-        border: 1px solid #e2e8f0;
+        border: 1px solid rgba(128, 128, 128, 0.2);
         border-radius: 10px;
         padding: 12px 16px;
     }
     div[data-testid="stMetric"] label { font-size: 13px !important; }
-    .status-full { background: #d1fae5; color: #059669; padding: 2px 10px; border-radius: 12px; font-size: 13px; font-weight: 600; }
-    .status-partial { background: #fef3c7; color: #d97706; padding: 2px 10px; border-radius: 12px; font-size: 13px; font-weight: 600; }
-    .status-unfunded { background: #fee2e2; color: #dc2626; padding: 2px 10px; border-radius: 12px; font-size: 13px; font-weight: 600; }
+    .status-full { background: #059669; color: #fff; padding: 2px 10px; border-radius: 12px; font-size: 13px; font-weight: 600; display: inline-block; }
+    .status-partial { background: #d97706; color: #fff; padding: 2px 10px; border-radius: 12px; font-size: 13px; font-weight: 600; display: inline-block; }
+    .status-unfunded { background: #dc2626; color: #fff; padding: 2px 10px; border-radius: 12px; font-size: 13px; font-weight: 600; display: inline-block; }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -216,7 +216,7 @@ def expense_chart():
     fig.update_layout(
         title="Monthly Expense Projection by Item",
         xaxis_title="Year", yaxis_title="₹ / month",
-        hovermode="x unified", template="plotly_white",
+        hovermode="x unified", template=None,
         height=400, legend=dict(orientation="h", y=-0.15),
         margin=dict(l=60, r=20, t=50, b=60),
     )
@@ -247,7 +247,7 @@ def asset_chart():
     fig.update_layout(
         title="Asset Growth Projection by Holding",
         xaxis_title="Year", yaxis_title="₹",
-        hovermode="x unified", template="plotly_white",
+        hovermode="x unified", template=None,
         height=400, legend=dict(orientation="h", y=-0.15),
         margin=dict(l=60, r=20, t=50, b=60),
     )
@@ -268,7 +268,7 @@ def allocation_pie_chart():
         hovertemplate="%{label}: ₹%{value:,.0f}<extra></extra>"
     ))
     fig.update_layout(
-        title="Asset Allocation", template="plotly_white",
+        title="Asset Allocation", template=None,
         height=350, margin=dict(l=20, r=20, t=50, b=20),
         showlegend=False,
     )
@@ -284,7 +284,7 @@ def nw_bar_chart():
         hovertemplate="₹%{y:,.0f}<extra></extra>"
     ))
     fig.update_layout(
-        title="Net Worth Projection", template="plotly_white",
+        title="Net Worth Projection", template=None,
         height=350, margin=dict(l=60, r=20, t=50, b=40),
         yaxis_title="₹",
     )
@@ -325,11 +325,11 @@ with tab_dash:
 
     chart_l, chart_r = st.columns(2)
     with chart_l:
-        st.plotly_chart(nw_bar_chart(), use_container_width=True)
+        st.plotly_chart(nw_bar_chart(), width="stretch")
     with chart_r:
         pie = allocation_pie_chart()
         if pie:
-            st.plotly_chart(pie, use_container_width=True)
+            st.plotly_chart(pie, width="stretch")
         else:
             st.info("No assets added yet.")
 
@@ -344,7 +344,7 @@ with tab_dash:
 # ═══════════════ EXPENSES ═══════════════
 with tab_exp:
     # Chart first
-    st.plotly_chart(expense_chart(), use_container_width=True)
+    st.plotly_chart(expense_chart(), width="stretch")
 
     st.markdown(f"### Monthly Expenses")
     st.caption(f"Total: {fmt_full(total_monthly())}/month · Avg inflation: {avg_inflation():.1f}%")
@@ -390,7 +390,7 @@ with tab_exp:
             total += val
         row["Total"] = fmt_full(round(total))
         table_data.append(row)
-    st.dataframe(table_data, use_container_width=True, hide_index=True)
+    st.dataframe(table_data, width="stretch", hide_index=True)
 
 
 # ═══════════════ GOALS ═══════════════
@@ -435,13 +435,13 @@ with tab_goals:
             "Year": f'Yr {g["target_year"]}',
             "Inflated Cost": fmt(g["inflated_cost"]),
         })
-    st.dataframe(proj_table, use_container_width=True, hide_index=True)
+    st.dataframe(proj_table, width="stretch", hide_index=True)
 
 
 # ═══════════════ ASSETS ═══════════════
 with tab_assets:
     # Chart first
-    st.plotly_chart(asset_chart(), use_container_width=True)
+    st.plotly_chart(asset_chart(), width="stretch")
 
     st.markdown("### Asset Portfolio")
     st.caption(f"Total: {fmt_full(total_net_worth())} · Weighted CAGR: {weighted_cagr():.1f}%")
@@ -495,4 +495,4 @@ with tab_assets:
         "10 Yrs": fmt(portfolio_at_year(10)),
         "20 Yrs": fmt(portfolio_at_year(20)),
     })
-    st.dataframe(asset_table, use_container_width=True, hide_index=True)
+    st.dataframe(asset_table, width="stretch", hide_index=True)
