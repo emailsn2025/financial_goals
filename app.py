@@ -74,6 +74,12 @@ if "assets" not in st.session_state:
 if "projection_years" not in st.session_state:
     st.session_state.projection_years = 30
 
+if "data_version" not in st.session_state:
+    st.session_state.data_version = 0
+
+# Prefix for widget keys — changes on data load so widgets pick up new values
+_v = st.session_state.data_version
+
 
 # ─── Computed values ───
 def total_monthly():
@@ -326,6 +332,14 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
         if uploaded is not None:
             try:
                 data = json.loads(uploaded.read().decode("utf-8"))
+                st.session_state["_pending_load"] = data
+                st.success(f"✓ File read — {len(data.get('expenses', []))} expenses, {len(data.get('goals', []))} goals, {len(data.get('assets', []))} assets")
+            except Exception as e:
+                st.error(f"Could not read file: {e}")
+
+        if st.session_state.get("_pending_load"):
+            if st.button("✅ Apply Loaded Data", use_container_width=True, type="primary"):
+                data = st.session_state.pop("_pending_load")
                 if "expenses" in data:
                     st.session_state.expenses = data["expenses"]
                 if "projection_years" in data:
@@ -334,10 +348,8 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
                     st.session_state.goals = data["goals"]
                 if "assets" in data:
                     st.session_state.assets = data["assets"]
-                st.success("✓ Data loaded!")
+                st.session_state.data_version += 1
                 st.rerun()
-            except Exception as e:
-                st.error(f"Could not read file: {e}")
 
     with reset_col:
         if st.button("🔄 Reset to Defaults", use_container_width=True):
@@ -360,6 +372,7 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
                 {"name": "Flat (Pune)", "asset_class": "Property", "value": 6000000, "cagr": 5.0},
             ]
             st.session_state.projection_years = 30
+            st.session_state.data_version += 1
             st.rerun()
 
 st.caption("Project your finances · Track goals · Allocate assets")
@@ -417,22 +430,22 @@ with tab_exp:
 
     st.session_state.projection_years = st.number_input(
         "Projection Horizon (years)", min_value=1, max_value=50,
-        value=st.session_state.projection_years, key="proj_yrs_input"
+        value=st.session_state.projection_years, key=f"v{_v}_proj_yrs"
     )
 
     # Editable expense rows
     for i, e in enumerate(st.session_state.expenses):
         cols = st.columns([3, 2, 1.5, 0.8])
         with cols[0]:
-            new_name = st.text_input("Name", value=e["name"], key=f"exp_name_{i}", label_visibility="collapsed" if i > 0 else "visible")
+            new_name = st.text_input("Name", value=e["name"], key=f"v{_v}_exp_name_{i}", label_visibility="collapsed" if i > 0 else "visible")
         with cols[1]:
-            new_monthly = st.number_input("Monthly ₹", value=e["monthly"], min_value=0, step=500, key=f"exp_monthly_{i}", label_visibility="collapsed" if i > 0 else "visible")
+            new_monthly = st.number_input("Monthly ₹", value=e["monthly"], min_value=0, step=500, key=f"v{_v}_exp_monthly_{i}", label_visibility="collapsed" if i > 0 else "visible")
         with cols[2]:
-            new_inf = st.number_input("Inflation %", value=e["inflation"], min_value=0.0, max_value=30.0, step=0.5, key=f"exp_inf_{i}", label_visibility="collapsed" if i > 0 else "visible")
+            new_inf = st.number_input("Inflation %", value=e["inflation"], min_value=0.0, max_value=30.0, step=0.5, key=f"v{_v}_exp_inf_{i}", label_visibility="collapsed" if i > 0 else "visible")
         with cols[3]:
             if i == 0:
                 st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("🗑️", key=f"del_exp_{i}"):
+            if st.button("🗑️", key=f"v{_v}_del_exp_{i}"):
                 st.session_state.expenses.pop(i)
                 st.rerun()
 
@@ -440,7 +453,7 @@ with tab_exp:
         st.session_state.expenses[i]["monthly"] = new_monthly
         st.session_state.expenses[i]["inflation"] = new_inf
 
-    if st.button("➕ Add Expense", key="add_exp"):
+    if st.button("➕ Add Expense", key=f"v{_v}_add_exp"):
         st.session_state.expenses.append({"name": "", "monthly": 0, "inflation": 6.0})
         st.rerun()
 
@@ -466,17 +479,17 @@ with tab_goals:
     for i, g in enumerate(st.session_state.goals):
         cols = st.columns([3, 2, 1.5, 1.5, 0.8])
         with cols[0]:
-            new_name = st.text_input("Goal Name", value=g["name"], key=f"goal_name_{i}", label_visibility="collapsed" if i > 0 else "visible")
+            new_name = st.text_input("Goal Name", value=g["name"], key=f"v{_v}_goal_name_{i}", label_visibility="collapsed" if i > 0 else "visible")
         with cols[1]:
-            new_cost = st.number_input("Today's Cost ₹", value=g["current_cost"], min_value=0, step=50000, key=f"goal_cost_{i}", label_visibility="collapsed" if i > 0 else "visible")
+            new_cost = st.number_input("Today's Cost ₹", value=g["current_cost"], min_value=0, step=50000, key=f"v{_v}_goal_cost_{i}", label_visibility="collapsed" if i > 0 else "visible")
         with cols[2]:
-            new_inf = st.number_input("Inflation %", value=g["inflation"], min_value=0.0, max_value=30.0, step=0.5, key=f"goal_inf_{i}", label_visibility="collapsed" if i > 0 else "visible")
+            new_inf = st.number_input("Inflation %", value=g["inflation"], min_value=0.0, max_value=30.0, step=0.5, key=f"v{_v}_goal_inf_{i}", label_visibility="collapsed" if i > 0 else "visible")
         with cols[3]:
-            new_yr = st.number_input("Target Year", value=g["target_year"], min_value=1, max_value=50, key=f"goal_yr_{i}", label_visibility="collapsed" if i > 0 else "visible")
+            new_yr = st.number_input("Target Year", value=g["target_year"], min_value=1, max_value=50, key=f"v{_v}_goal_yr_{i}", label_visibility="collapsed" if i > 0 else "visible")
         with cols[4]:
             if i == 0:
                 st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("🗑️", key=f"del_goal_{i}"):
+            if st.button("🗑️", key=f"v{_v}_del_goal_{i}"):
                 st.session_state.goals.pop(i)
                 st.rerun()
 
@@ -485,7 +498,7 @@ with tab_goals:
         st.session_state.goals[i]["inflation"] = new_inf
         st.session_state.goals[i]["target_year"] = new_yr
 
-    if st.button("➕ Add Goal", key="add_goal"):
+    if st.button("➕ Add Goal", key=f"v{_v}_add_goal"):
         st.session_state.goals.append({"name": "", "current_cost": 0, "inflation": 6.0, "target_year": 5})
         st.rerun()
 
@@ -515,17 +528,17 @@ with tab_assets:
     for i, a in enumerate(st.session_state.assets):
         cols = st.columns([3, 2, 2, 1.5, 0.8])
         with cols[0]:
-            new_name = st.text_input("Asset Name", value=a["name"], key=f"asset_name_{i}", label_visibility="collapsed" if i > 0 else "visible")
+            new_name = st.text_input("Asset Name", value=a["name"], key=f"v{_v}_asset_name_{i}", label_visibility="collapsed" if i > 0 else "visible")
         with cols[1]:
-            new_cls = st.selectbox("Class", ASSET_CLASSES, index=ASSET_CLASSES.index(a["asset_class"]), key=f"asset_cls_{i}", label_visibility="collapsed" if i > 0 else "visible")
+            new_cls = st.selectbox("Class", ASSET_CLASSES, index=ASSET_CLASSES.index(a["asset_class"]), key=f"v{_v}_asset_cls_{i}", label_visibility="collapsed" if i > 0 else "visible")
         with cols[2]:
-            new_val = st.number_input("Value ₹", value=a["value"], min_value=0, step=10000, key=f"asset_val_{i}", label_visibility="collapsed" if i > 0 else "visible")
+            new_val = st.number_input("Value ₹", value=a["value"], min_value=0, step=10000, key=f"v{_v}_asset_val_{i}", label_visibility="collapsed" if i > 0 else "visible")
         with cols[3]:
-            new_cagr = st.number_input("CAGR %", value=a["cagr"], min_value=0.0, max_value=50.0, step=0.5, key=f"asset_cagr_{i}", label_visibility="collapsed" if i > 0 else "visible")
+            new_cagr = st.number_input("CAGR %", value=a["cagr"], min_value=0.0, max_value=50.0, step=0.5, key=f"v{_v}_asset_cagr_{i}", label_visibility="collapsed" if i > 0 else "visible")
         with cols[4]:
             if i == 0:
                 st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("🗑️", key=f"del_asset_{i}"):
+            if st.button("🗑️", key=f"v{_v}_del_asset_{i}"):
                 st.session_state.assets.pop(i)
                 st.rerun()
 
@@ -534,7 +547,7 @@ with tab_assets:
         st.session_state.assets[i]["value"] = new_val
         st.session_state.assets[i]["cagr"] = new_cagr
 
-    if st.button("➕ Add Asset", key="add_asset"):
+    if st.button("➕ Add Asset", key=f"v{_v}_add_asset"):
         st.session_state.assets.append({"name": "", "asset_class": "Equity", "value": 0, "cagr": 10.0})
         st.rerun()
 
