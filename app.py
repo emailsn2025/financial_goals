@@ -307,7 +307,12 @@ def import_goals_from_excel(uploaded_file):
                     val = row[c]
                     if field == "current_cost": g[field] = parse_indian(str(val))
                     elif field in ("inflation",): g[field] = float(str(val).replace("%","").strip() or 6)
-                    elif field == "target_year": g[field] = int(float(str(val).strip() or 5))
+                    elif field == "target_year":
+                        raw_yr = int(float(str(val).strip() or 5))
+                        # If value looks like a calendar year (e.g. 2035), convert to years from now
+                        if raw_yr > 100:
+                            raw_yr = max(raw_yr - TODAY.year, 1)
+                        g[field] = min(max(raw_yr, 1), 100)
                     elif field == "cumulative":  g[field] = str(val).strip().lower() in ("true","yes","1","y")
                     else: g[field] = str(val).strip()
             new_goals.append(g)
@@ -715,7 +720,7 @@ with tab_goals:
         with cols[0]: nn  = st.text_input("Name",  value=g["name"],        key=f"v{_v}_goal_name_{i}", label_visibility="collapsed", placeholder="e.g. Retirement")
         with cols[1]: nc  = currency_input("Cost",  g["current_cost"],      key=f"v{_v}_goal_cost_{i}", label_visibility="collapsed")
         with cols[2]: ni  = st.number_input("Inf%", value=g["inflation"],   key=f"v{_v}_goal_inf_{i}",  min_value=0.0, max_value=30.0, step=0.5, label_visibility="collapsed")
-        with cols[3]: ny  = st.number_input("Yr",   value=g["target_year"], key=f"v{_v}_goal_yr_{i}",   min_value=1, max_value=50, label_visibility="collapsed")
+        with cols[3]: ny  = st.number_input("Yr",   value=min(int(g["target_year"]), 100), key=f"v{_v}_goal_yr_{i}",   min_value=1, max_value=100, label_visibility="collapsed")
         with cols[4]: ncu = st.checkbox("Cum",      value=g.get("cumulative",False), key=f"v{_v}_goal_cum_{i}", label_visibility="collapsed")
         with cols[5]:
             if st.button("🗑️", key=f"v{_v}_del_goal_{i}"): st.session_state.goals.pop(i); st.rerun()
@@ -812,7 +817,7 @@ with tab_assets:
                 key=f"v{_v}_asset_swp_{i}", label_visibility="collapsed")
         with cols[9]:
             nsy = st.number_input("SWP Yr", value=int(a.get("swp_start_year",0) or 0),
-                min_value=0, max_value=50, key=f"v{_v}_asset_swpyr_{i}", label_visibility="collapsed")
+                min_value=0, max_value=100, key=f"v{_v}_asset_swpyr_{i}", label_visibility="collapsed")
         with cols[10]:
             if st.button("🗑️", key=f"v{_v}_del_asset_{i}"): st.session_state.assets.pop(i); st.rerun()
 
