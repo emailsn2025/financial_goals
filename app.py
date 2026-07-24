@@ -296,6 +296,72 @@ def nw_bar_chart():
 # ═══════════════════════════════════════════════════
 
 st.markdown("## 📊 Net Worth & Goal Planner")
+
+# ─── Save / Load data ───
+with st.expander("💾 Save & Load Your Data", expanded=False):
+    st.caption("Your data only lasts while this tab is open. Use these buttons to save your numbers to a file and reload them next time.")
+    save_col, load_col, reset_col = st.columns([1, 1, 1])
+
+    with save_col:
+        save_data = json.dumps({
+            "expenses": st.session_state.expenses,
+            "projection_years": st.session_state.projection_years,
+            "goals": st.session_state.goals,
+            "assets": st.session_state.assets,
+        }, indent=2)
+        st.download_button(
+            "⬇️ Download My Data",
+            data=save_data,
+            file_name="financial_planner_data.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+
+    with load_col:
+        uploaded = st.file_uploader(
+            "Load saved data",
+            type=["json"],
+            label_visibility="collapsed",
+        )
+        if uploaded is not None:
+            try:
+                data = json.loads(uploaded.read().decode("utf-8"))
+                if "expenses" in data:
+                    st.session_state.expenses = data["expenses"]
+                if "projection_years" in data:
+                    st.session_state.projection_years = data["projection_years"]
+                if "goals" in data:
+                    st.session_state.goals = data["goals"]
+                if "assets" in data:
+                    st.session_state.assets = data["assets"]
+                st.success("✓ Data loaded!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Could not read file: {e}")
+
+    with reset_col:
+        if st.button("🔄 Reset to Defaults", use_container_width=True):
+            st.session_state.expenses = [
+                {"name": "Rent", "monthly": 20000, "inflation": 5.0},
+                {"name": "Groceries & Food", "monthly": 12000, "inflation": 7.0},
+                {"name": "Utilities & Bills", "monthly": 5000, "inflation": 6.0},
+                {"name": "Transport", "monthly": 4000, "inflation": 5.0},
+                {"name": "Other / Lifestyle", "monthly": 9000, "inflation": 6.0},
+            ]
+            st.session_state.goals = [
+                {"name": "Child's Education", "current_cost": 2000000, "inflation": 8.0, "target_year": 10},
+                {"name": "Home Purchase", "current_cost": 8000000, "inflation": 6.0, "target_year": 5},
+                {"name": "Retirement Corpus", "current_cost": 30000000, "inflation": 7.0, "target_year": 25},
+            ]
+            st.session_state.assets = [
+                {"name": "Equity MF Portfolio", "asset_class": "Equity", "value": 1500000, "cagr": 12.0},
+                {"name": "Fixed Deposits", "asset_class": "Debt", "value": 800000, "cagr": 7.0},
+                {"name": "Gold Holdings", "asset_class": "Precious Metals", "value": 500000, "cagr": 9.0},
+                {"name": "Flat (Pune)", "asset_class": "Property", "value": 6000000, "cagr": 5.0},
+            ]
+            st.session_state.projection_years = 30
+            st.rerun()
+
 st.caption("Project your finances · Track goals · Allocate assets")
 
 tab_dash, tab_exp, tab_goals, tab_assets = st.tabs(["Dashboard", "Expenses", "Goals", "Assets"])
