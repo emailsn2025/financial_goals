@@ -63,7 +63,7 @@ def parse_indian(s):
     except: return 0
 
 def compound(principal, rate_pct, years):
-    return principal * (1 + rate_pct / 100) ** years
+    return _compound_cached(float(principal), float(rate_pct), float(years))
 
 def currency_input(label, value, key, **kwargs):
     parsed_val = int(round(value)) if value else 0
@@ -108,14 +108,19 @@ def asset_net_maturity(invested, maturity_amt, asset_class):
     return maturity_amt - tax, tax
 
 # ══════════════════════════════════════════════════════
-# ASSET VALUE WITH SWP
+# CACHED PURE COMPUTATION (no session state)
 # ══════════════════════════════════════════════════════
 
-def asset_value_at_year(a, target_year, avg_inf=6.0):
-    val          = float(a["value"])
-    swp          = float(a.get("swp_monthly", 0) or 0)
-    swp_start    = int(a.get("swp_start_year", 0) or 0)
-    monthly_rate = (1 + a["cagr"] / 100) ** (1/12) - 1
+@st.cache_data(max_entries=512)
+def _asset_value_at_year_cached(value, cagr, swp_monthly, swp_start_year, target_year, avg_inf):
+    """
+    Pure cached version of asset projection.
+    Takes primitives only (no dict) so cache keys work correctly.
+    """
+    val          = float(value)
+    swp          = float(swp_monthly or 0)
+    swp_start    = int(swp_start_year or 0)
+    monthly_rate = (1 + cagr / 100) ** (1/12) - 1
     for yr in range(target_year):
         if swp > 0 and yr >= swp_start:
             monthly_withdrawal = swp * (1 + avg_inf / 100) ** (yr - swp_start)
@@ -125,6 +130,24 @@ def asset_value_at_year(a, target_year, avg_inf=6.0):
             val = val * (1 + monthly_rate) - monthly_withdrawal
             if val < 0: val = 0; break
     return max(val, 0)
+
+@st.cache_data(max_entries=256)
+def _compound_cached(principal, rate_pct, years):
+    return principal * (1 + rate_pct / 100) ** years
+
+# ══════════════════════════════════════════════════════
+# ASSET VALUE WITH SWP  (thin wrapper → cached pure fn)
+# ══════════════════════════════════════════════════════
+
+def asset_value_at_year(a, target_year, avg_inf=6.0):
+    return _asset_value_at_year_cached(
+        value         = float(a.get("value", 0) or 0),
+        cagr          = float(a.get("cagr", 0) or 0),
+        swp_monthly   = float(a.get("swp_monthly", 0) or 0),
+        swp_start_year= int(a.get("swp_start_year", 0) or 0),
+        target_year   = int(target_year),
+        avg_inf       = float(avg_inf),
+    )
 
 # ══════════════════════════════════════════════════════
 # SESSION STATE
@@ -191,33 +214,26 @@ def goal_frequency(g):
     """Recurrence interval in years. 0 or blank = one-time."""
     return max(int(g.get("frequency", 0) or 0), 0)
 
+@st.cache_data(max_entries=256)
+def _goal_occurrences_cached(base, inf, start, end, freq):
+    """Pure cached goal occurrence calculator."""
+    occurrences = []
+    if freq <= 0:
+        occurrences.append((start, _compound_cached(base, inf, start)))
+    else:
+        yr = start
+        while yr <= end:
+            occurrences.append((yr, _compound_cached(base, inf, yr)))
+            yr += freq
+    return occurrences
+
 def goal_occurrences(g):
-    """
-    List of (year, inflated_cost) for every occurrence of the goal.
-    - One-time goal: single entry at start_year
-    - Recurring goal: entries at start_year, start_year+freq, ... up to end_year
-    Inflation is applied per-occurrence relative to start_year (cost rises with each cycle).
-    """
     start = goal_start_year(g)
     end   = goal_end_year(g)
     freq  = goal_frequency(g)
     base  = float(g.get("current_cost", 0) or 0)
     inf   = float(g.get("inflation", 6) or 6)
-
-    occurrences = []
-    if freq <= 0:
-        # One-time goal at start_year
-        inflated = compound(base, inf, start)
-        occurrences.append((start, inflated))
-    else:
-        yr = start
-        while yr <= end:
-            # Inflate from today to the occurrence year
-            inflated = compound(base, inf, yr)
-            occurrences.append((yr, inflated))
-            yr += freq
-
-    return occurrences
+    return _goal_occurrences_cached(base, inf, start, end, freq)
 
 def goal_projections():
     """Return goals sorted by start_year, with cumulative cost and last occurrence year."""
@@ -545,6 +561,7 @@ def nw_bar_chart():
 # RETIREMENT SIMULATION
 # ══════════════════════════════════════════════════════
 
+@st.cache_data(max_entries=64)
 def retirement_simulation(opening_corpus, annual_return_pct, asset_class,
                            quarterly_withdrawal, withdrawal_inflation_pct,
                            tax_rate_override=None):
