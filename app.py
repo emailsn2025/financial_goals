@@ -613,15 +613,20 @@ def get_logo_b64():
     return None
 
 logo_b64 = get_logo_b64()
-title_col, logo_col = st.columns([4, 1])
+title_col, logo_col = st.columns([3, 1])
 with title_col:
     st.markdown("## 📊 Net Worth & Goal Planner")
 with logo_col:
     if logo_b64:
         st.markdown(
-            f'<div style="text-align:right; padding-top:4px;">'
-            f'<img src="data:image/jpeg;base64,{logo_b64}" style="height:80px; object-fit:contain;"/>'
-            f'</div>',
+            f'<div style="display:flex; justify-content:center; align-items:center; padding:6px;">'
+            f'<img src="data:image/jpeg;base64,{logo_b64}" style="'
+            f'height:90px; object-fit:contain; '
+            f'background:#000000; '
+            f'border: 3px solid #ffffff; '
+            f'border-radius: 10px; '
+            f'padding: 6px;'
+            f'"/></div>',
             unsafe_allow_html=True,
         )
 
@@ -816,6 +821,32 @@ the Save button above.*
             })
 
         st.dataframe(summary_rows, width="stretch", hide_index=True)
+
+        # ── Surplus / Shortfall Banner ──
+        all_fully_funded = all(r["% Met"] == "100%" for r in summary_rows)
+        total_cost_all   = sum(alloc_map.get(g["name"] or "(unnamed)", {}).get("display_cost", 0)
+                               for g in goal_projections())
+        total_alloc_all  = sum(alloc_map.get(g["name"] or "(unnamed)", {}).get("allocated", 0)
+                               for g in goal_projections())
+        surplus_amt      = total_alloc_all - total_cost_all
+
+        if all_fully_funded and surplus_amt > 0:
+            st.markdown("---")
+            st.markdown(
+                f'<div style="background:#059669; border-radius:10px; padding:16px 20px; margin-top:8px;">'
+                f'<span style="color:#fff; font-size:18px; font-weight:700;">🎉 All Goals Fully Funded!</span><br/>'
+                f'<span style="color:#d1fae5; font-size:14px;">'
+                f'Your portfolio covers every goal with a surplus of '
+                f'<strong style="color:#fff; font-size:16px;">{fmt(surplus_amt)}</strong> remaining. '
+                f'Consider investing the surplus in additional wealth-building assets or topping up '
+                f'your retirement corpus.'
+                f'</span></div>',
+                unsafe_allow_html=True,
+            )
+            s1, s2, s3 = st.columns(3)
+            s1.metric("Total Goal Cost",   fmt(total_cost_all))
+            s2.metric("Total Allocated",   fmt(total_alloc_all))
+            s3.metric("Portfolio Surplus", fmt(surplus_amt))
 
 # ══════════════════════════════════════════════════════
 # INCOME & EXPENSES
