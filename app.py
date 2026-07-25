@@ -3,6 +3,8 @@ import plotly.graph_objects as go
 import json
 import pandas as pd
 from datetime import date, datetime
+import base64
+import os
 
 st.set_page_config(page_title="Net Worth & Goal Planner", page_icon="📊", layout="wide")
 
@@ -602,7 +604,26 @@ def retirement_simulation(opening_corpus, annual_return_pct, asset_class,
 # LAYOUT
 # ══════════════════════════════════════════════════════
 
-st.markdown("## 📊 Net Worth & Goal Planner")
+# ── Logo + title ──
+def get_logo_b64():
+    logo_path = os.path.join(os.path.dirname(__file__), "shiftgaze_logo.jpg")
+    if os.path.exists(logo_path):
+        with open(logo_path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    return None
+
+logo_b64 = get_logo_b64()
+title_col, logo_col = st.columns([4, 1])
+with title_col:
+    st.markdown("## 📊 Net Worth & Goal Planner")
+with logo_col:
+    if logo_b64:
+        st.markdown(
+            f'<div style="text-align:right; padding-top:4px;">'
+            f'<img src="data:image/jpeg;base64,{logo_b64}" style="height:80px; object-fit:contain;"/>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
 with st.expander("💾 Save & Load Your Data", expanded=False):
     st.caption("Your data resets when you close this tab. Download to keep it safe.")
@@ -736,6 +757,65 @@ the Save button above.*
         st.markdown("### Recommendations")
         for icon,title,text in recs:
             st.markdown(f"**{icon} {title}** — {text}")
+
+    # ── Goal Summary Table ──
+    if st.session_state.goals:
+        st.markdown("### Goal Summary")
+        alloc_map = {g["name"]: g for g in smart_allocation()}
+        ai        = avg_inflation()
+        tnw       = total_net_worth()
+        prof      = risk_profile()
+        eq_pct    = sum(a["value"] for a in st.session_state.assets if a["asset_class"]=="Equity") / tnw * 100 if tnw > 0 else 0
+
+        summary_rows = []
+        for g in goal_projections():
+            name  = g["name"] or "(unnamed)"
+            alloc = alloc_map.get(name, {})
+            pct   = alloc.get("pct", 0)
+            cost  = alloc.get("display_cost", g["cumulative_cost"])
+            allocated = alloc.get("allocated", 0)
+            gap   = max(cost - allocated, 0)
+
+            # Additional annual contribution needed to close the gap
+            years_left = max(goal_start_year(g), 1)
+            # FV of annual contribution at weighted CAGR to close gap
+            wcagr = weighted_cagr() / 100
+            if wcagr > 0 and years_left > 0:
+                # How much to invest annually so it grows to `gap` in `years_left` years
+                # PMT = FV × r / ((1+r)^n − 1)
+                annual_contrib = gap * wcagr / ((1 + wcagr) ** years_left - 1) if ((1 + wcagr) ** years_left - 1) > 0 else gap / years_left
+            else:
+                annual_contrib = gap / years_left if years_left > 0 else gap
+
+            # Recommendation logic
+            if pct >= 100:
+                rec = "✅ On track — maintain current allocation"
+            else:
+                tips = []
+                if eq_pct < 50 and years_left > 7:
+                    tips.append("increase equity allocation for higher long-term growth")
+                if gap > 0 and annual_contrib > 0:
+                    tips.append(f"invest {fmt(annual_contrib)} more per year")
+                tagged = alloc.get("tagged_assets", [])
+                if not tagged:
+                    tips.append("tag assets to this goal for better tracking")
+                if ai > weighted_cagr():
+                    tips.append("inflation exceeds portfolio returns — consider higher-growth assets")
+                rec = "; ".join(tips).capitalize() if tips else "Review asset allocation"
+
+            start_cal = g["start_year"] if g["start_year"] > 1000 else rel_to_cal(goal_start_year(g))
+            summary_rows.append({
+                "Goal":                        name,
+                "Start":                       str(start_cal),
+                "Target Cost":                 fmt(cost),
+                "Allocated":                   fmt(allocated),
+                "% Met":                       f"{pct}%",
+                "Status":                      alloc.get("status", "—"),
+                "Add'l Contribution / Year":   fmt(annual_contrib) if gap > 0 else "—",
+                "Recommendation":              rec,
+            })
+
+        st.dataframe(summary_rows, width="stretch", hide_index=True)
 
 # ══════════════════════════════════════════════════════
 # INCOME & EXPENSES
