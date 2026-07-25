@@ -290,7 +290,7 @@ def get_recommendations():
     if shortfalls:
         g   = shortfalls[0]
         gap = g["display_cost"] - g["allocated"]
-        sip = gap / (g["target_year"]*12) if g["target_year"] > 0 else gap
+        sip = gap / (g["start_year"]*12) if g["start_year"] > 0 else gap
         recs.append(("📊","Cover Shortfall",
             f'"{g["name"]}" is {g["pct"]}% funded. Save ~{fmt(sip)}/month to close the {fmt(gap)} gap.'))
 
@@ -299,7 +299,7 @@ def get_recommendations():
             recs.append(("⚠️","Inflation Warning",
                 f'"{a["name"]}" returns {a["cagr"]}% — below avg inflation {ai:.1f}%.'))
 
-    if any(g["target_year"]<=3 for g in st.session_state.goals) and \
+    if any(g.get("start_year",1)<=3 for g in st.session_state.goals) and \
        any(a["asset_class"]=="Equity" for a in st.session_state.assets):
         recs.append(("🔄","Horizon Matching",
             "Goals within 3 years detected. Consider shifting equity into debt for capital protection."))
@@ -481,7 +481,7 @@ def expense_income_chart():
 
 def asset_chart():
     ai    = avg_inflation()
-    max_y = max(st.session_state.projection_years, max((g["target_year"] for g in st.session_state.goals), default=30))
+    max_y = max(st.session_state.projection_years, max((g.get("end_year", g.get("start_year",1)) for g in st.session_state.goals), default=30))
     years = list(range(max_y+1))
     fig   = go.Figure(); totals=[0.0]*len(years)
     for i, a in enumerate(st.session_state.assets):
@@ -517,7 +517,7 @@ def allocation_pie_chart():
     return fig
 
 def nw_bar_chart():
-    max_y = max(30, max((g["target_year"] for g in st.session_state.goals), default=30))
+    max_y = max(30, max((g.get("end_year", g.get("start_year",1)) for g in st.session_state.goals), default=30))
     years = list(range(0, max_y+1, 5))
     vals  = [portfolio_at_year(y) for y in years]
     fig   = go.Figure(go.Bar(x=[f"Yr {y}" for y in years], y=vals,
@@ -1090,7 +1090,7 @@ with tab_retire:
 
         tagged_assets  = [a for a in st.session_state.assets if selected_goal_name in (a.get("tagged_goals") or [])]
         selected_goal  = next((g for g in all_goals if (g["name"] or f"Goal {all_goals.index(g)+1}") == selected_goal_name), None)
-        goal_year      = selected_goal["target_year"] if selected_goal else 0
+        goal_year      = selected_goal.get("start_year", 1) if selected_goal else 0
         ai             = avg_inflation()
 
         if tagged_assets:
