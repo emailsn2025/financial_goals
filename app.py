@@ -840,12 +840,12 @@ the Save button above.*
         st.dataframe(summary_rows, width="stretch", hide_index=True)
 
         # ── Surplus / Shortfall Banner ──
-        all_fully_funded = all(r["% Met"] == "100%" for r in summary_rows)
-        total_cost_all   = sum(alloc_map.get(g["name"] or "(unnamed)", {}).get("display_cost", 0)
-                               for g in goal_projections())
-        total_alloc_all  = sum(alloc_map.get(g["name"] or "(unnamed)", {}).get("allocated", 0)
-                               for g in goal_projections())
-        surplus_amt      = total_alloc_all - total_cost_all
+        # Use numeric pct from alloc directly (not the string in summary_rows)
+        alloc_list      = list(alloc_map.values())
+        all_fully_funded = len(alloc_list) > 0 and all(g.get("pct", 0) >= 100 for g in alloc_list)
+        total_cost_all  = sum(g.get("display_cost", 0) for g in alloc_list)
+        total_alloc_all = sum(g.get("allocated", 0)    for g in alloc_list)
+        surplus_amt     = total_alloc_all - total_cost_all
 
         if all_fully_funded and surplus_amt > 0:
             st.markdown("---")
@@ -864,6 +864,20 @@ the Save button above.*
             s1.metric("Total Goal Cost",   fmt(total_cost_all))
             s2.metric("Total Allocated",   fmt(total_alloc_all))
             s3.metric("Portfolio Surplus", fmt(surplus_amt))
+        elif not all_fully_funded and len(alloc_list) > 0:
+            total_gap = sum(max(g.get("display_cost", 0) - g.get("allocated", 0), 0) for g in alloc_list)
+            if total_gap > 0:
+                st.markdown("---")
+                st.markdown(
+                    f'<div style="background:#dc2626; border-radius:10px; padding:16px 20px; margin-top:8px;">'
+                    f'<span style="color:#fff; font-size:18px; font-weight:700;">⚠️ Portfolio Shortfall</span><br/>'
+                    f'<span style="color:#fee2e2; font-size:14px;">'
+                    f'Total funding gap across all goals: '
+                    f'<strong style="color:#fff; font-size:16px;">{fmt(total_gap)}</strong>. '
+                    f'See the Add\'l Contribution column above for per-goal top-up amounts.'
+                    f'</span></div>',
+                    unsafe_allow_html=True,
+                )
 
 # ══════════════════════════════════════════════════════
 # INCOME & EXPENSES
