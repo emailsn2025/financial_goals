@@ -22,6 +22,16 @@ ASSET_CLASSES = ["Debt", "Equity", "Property", "Precious Metals", "Other"]
 LINE_COLORS   = ["#2563eb","#059669","#d97706","#7c3aed","#0d9488","#e11d48","#0891b2","#ca8a04","#6366f1","#14b8a6"]
 TAX_RATES     = {"Equity":0.125, "Precious Metals":0.125, "Debt":0.30, "Property":0.30, "Other":0.30}
 TODAY         = date.today()
+THIS_YEAR     = TODAY.year
+YEAR_OPTIONS  = list(range(2000, 2101))   # 2000–2100 calendar year picker
+
+def cal_to_rel(cal_year):
+    """Convert calendar year → years from now (min 0)."""
+    return max(cal_year - THIS_YEAR, 0)
+
+def rel_to_cal(rel_year):
+    """Convert years from now → calendar year."""
+    return THIS_YEAR + int(rel_year)
 
 # ══════════════════════════════════════════════════════
 # HELPERS
@@ -165,12 +175,15 @@ def goal_names():
     return [g["name"] or f"Goal {i+1}" for i, g in enumerate(st.session_state.goals)]
 
 def goal_start_year(g):
-    """Years from now until goal starts."""
-    return max(int(g.get("start_year", 1) or 1), 1)
+    """Years from now until goal starts. Accepts either calendar year (>1000) or relative year."""
+    raw = int(g.get("start_year", 1) or 1)
+    return cal_to_rel(raw) if raw > 1000 else max(raw, 0)
 
 def goal_end_year(g):
-    """Years from now until goal ends."""
-    return max(int(g.get("end_year", 1) or 1), goal_start_year(g))
+    """Years from now until goal ends. Accepts either calendar year (>1000) or relative year."""
+    raw = int(g.get("end_year", 1) or 1)
+    rel = cal_to_rel(raw) if raw > 1000 else max(raw, 0)
+    return max(rel, goal_start_year(g))
 
 def goal_frequency(g):
     """Recurrence interval in years. 0 or blank = one-time."""
@@ -821,13 +834,13 @@ with tab_goals:
 
     # Column headers
     if st.session_state.goals:
-        hc = st.columns([2.5, 1.8, 1.2, 1.2, 1.2, 1.5, 1.2, 0.6])
+        hc = st.columns([2.5, 1.8, 1.2, 1.5, 1.5, 1.5, 1.2, 0.6])
         for h, lbl in zip(hc, ["Goal Name", "Cost Today ₹", "Inflation %",
-                                "Start Yr", "End Yr", "Frequency (yrs)", "Cumulative", ""]):
+                                "Start Year", "End Year", "Frequency (yrs)", "Cumulative", ""]):
             h.caption(lbl)
 
     for i, g in enumerate(st.session_state.goals):
-        cols = st.columns([2.5, 1.8, 1.2, 1.2, 1.2, 1.5, 1.2, 0.6])
+        cols = st.columns([2.5, 1.8, 1.2, 1.5, 1.5, 1.5, 1.2, 0.6])
         with cols[0]:
             nn = st.text_input("Name", value=g["name"], key=f"v{_v}_goal_name_{i}",
                 label_visibility="collapsed", placeholder="e.g. School Fees")
@@ -839,14 +852,26 @@ with tab_goals:
                 min_value=0.0, max_value=30.0, step=0.5,
                 key=f"v{_v}_goal_inf_{i}", label_visibility="collapsed")
         with cols[3]:
-            ns = st.number_input("Start", value=int(g.get("start_year", 1) or 1),
-                min_value=1, max_value=100,
+            # Stored value: calendar year (2000–2100)
+            raw_start = int(g.get("start_year", THIS_YEAR) or THIS_YEAR)
+            # Migrate legacy relative years (e.g. 1–100) to calendar years
+            if raw_start <= 1000:
+                raw_start = THIS_YEAR + raw_start
+            raw_start = max(2000, min(raw_start, 2100))
+            ns_cal = st.selectbox("Start Year", YEAR_OPTIONS,
+                index=YEAR_OPTIONS.index(raw_start),
                 key=f"v{_v}_goal_start_{i}", label_visibility="collapsed")
         with cols[4]:
-            ne_val = max(int(g.get("end_year", ns) or ns), ns)
-            ne = st.number_input("End", value=ne_val,
-                min_value=ns, max_value=100,
+            raw_end = int(g.get("end_year", ns_cal) or ns_cal)
+            if raw_end <= 1000:
+                raw_end = THIS_YEAR + raw_end
+            raw_end = max(ns_cal, min(raw_end, 2100))  # end >= start
+            ne_cal = st.selectbox("End Year", YEAR_OPTIONS,
+                index=YEAR_OPTIONS.index(raw_end),
                 key=f"v{_v}_goal_end_{i}", label_visibility="collapsed")
+            # Clamp silently if end < start
+            if ne_cal < ns_cal:
+                ne_cal = ns_cal
         with cols[5]:
             nf = st.number_input("Freq", value=int(g.get("frequency", 0) or 0),
                 min_value=0, max_value=50,
@@ -859,26 +884,31 @@ with tab_goals:
             if st.button("🗑️", key=f"v{_v}_del_goal_{i}"):
                 st.session_state.goals.pop(i); st.rerun()
 
-        # Show inline summary of occurrences
-        occs = goal_occurrences({**g, "start_year": ns, "end_year": ne,
-                                  "frequency": nf, "inflation": ni, "current_cost": nc})
+        # Build a preview using the calendar-year stored values (helpers will convert)
+        g_preview = {**g, "start_year": ns_cal, "end_year": ne_cal,
+                     "frequency": nf, "inflation": ni, "current_cost": nc}
+        occs = goal_occurrences(g_preview)
         if nf > 0 and len(occs) > 0:
-            occ_preview = ", ".join(f"Yr {yr}: {fmt(c)}" for yr, c in occs[:4])
+            # Show calendar years in preview
+            occ_preview = ", ".join(
+                f"{THIS_YEAR + yr}: {fmt(c)}" for yr, c in occs[:4])
             if len(occs) > 4: occ_preview += f" ... (+{len(occs)-4} more)"
             total = sum(c for _, c in occs)
             st.caption(f"↳ {len(occs)} payments — {occ_preview} · Total: **{fmt(total)}**")
         elif len(occs) > 0:
-            st.caption(f"↳ One-time at Yr {occs[0][0]}: **{fmt(occs[0][1])}**")
+            cal_yr = THIS_YEAR + occs[0][0]
+            st.caption(f"↳ One-time in {cal_yr}: **{fmt(occs[0][1])}**")
 
         st.session_state.goals[i].update({
             "name": nn, "current_cost": nc, "inflation": ni,
-            "start_year": ns, "end_year": ne, "frequency": nf, "cumulative": ncu,
+            "start_year": ns_cal, "end_year": ne_cal, "frequency": nf, "cumulative": ncu,
         })
 
     if st.button("➕ Add Goal", key=f"v{_v}_add_goal"):
         st.session_state.goals.append({
             "name": "", "current_cost": 0, "inflation": 6.0,
-            "start_year": 1, "end_year": 1, "frequency": 0, "cumulative": False,
+            "start_year": THIS_YEAR + 5, "end_year": THIS_YEAR + 5,
+            "frequency": 0, "cumulative": False,
         }); st.rerun()
 
     if st.session_state.goals:
@@ -887,12 +917,14 @@ with tab_goals:
         for g in proj:
             freq = goal_frequency(g)
             freq_str = f"Every {freq} yr(s)" if freq > 0 else "One-time"
+            start_cal = g["start_year"] if g["start_year"] > 1000 else rel_to_cal(g["start_year"])
+            end_cal   = g["end_year"]   if g["end_year"]   > 1000 else rel_to_cal(g["end_year"])
             row = {
                 "Goal":           g["name"] or "(unnamed)",
                 "Cost Today":     fmt_full(g["current_cost"]),
                 "Inflation":      f'{g["inflation"]}%',
-                "Start":          f'Yr {g["start_year"]}',
-                "End":            f'Yr {g["end_year"]}',
+                "Start":          str(start_cal),
+                "End":            str(end_cal),
                 "Frequency":      freq_str,
                 "Occurrences":    len(g["occurrences"]),
                 "First Payment":  fmt(g["inflated_cost"]),
