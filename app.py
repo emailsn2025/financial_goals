@@ -164,13 +164,64 @@ def risk_profile():
 def goal_names():
     return [g["name"] or f"Goal {i+1}" for i, g in enumerate(st.session_state.goals)]
 
+def goal_start_year(g):
+    """Years from now until goal starts."""
+    return max(int(g.get("start_year", 1) or 1), 1)
+
+def goal_end_year(g):
+    """Years from now until goal ends."""
+    return max(int(g.get("end_year", 1) or 1), goal_start_year(g))
+
+def goal_frequency(g):
+    """Recurrence interval in years. 0 or blank = one-time."""
+    return max(int(g.get("frequency", 0) or 0), 0)
+
+def goal_occurrences(g):
+    """
+    List of (year, inflated_cost) for every occurrence of the goal.
+    - One-time goal: single entry at start_year
+    - Recurring goal: entries at start_year, start_year+freq, ... up to end_year
+    Inflation is applied per-occurrence relative to start_year (cost rises with each cycle).
+    """
+    start = goal_start_year(g)
+    end   = goal_end_year(g)
+    freq  = goal_frequency(g)
+    base  = float(g.get("current_cost", 0) or 0)
+    inf   = float(g.get("inflation", 6) or 6)
+
+    occurrences = []
+    if freq <= 0:
+        # One-time goal at start_year
+        inflated = compound(base, inf, start)
+        occurrences.append((start, inflated))
+    else:
+        yr = start
+        while yr <= end:
+            # Inflate from today to the occurrence year
+            inflated = compound(base, inf, yr)
+            occurrences.append((yr, inflated))
+            yr += freq
+
+    return occurrences
+
 def goal_projections():
-    sorted_goals = sorted(st.session_state.goals, key=lambda g: g["target_year"])
+    """Return goals sorted by start_year, with cumulative cost and last occurrence year."""
+    sorted_goals = sorted(st.session_state.goals, key=lambda g: goal_start_year(g))
     out = []
     for g in sorted_goals:
-        inflated   = compound(g["current_cost"], g["inflation"], g["target_year"])
-        cumulative = sum(compound(g["current_cost"], g["inflation"], y) for y in range(g["target_year"]+1))
-        out.append({**g, "inflated_cost": inflated, "cumulative_cost": cumulative})
+        occs       = goal_occurrences(g)
+        total_cost = sum(cost for _, cost in occs)
+        first_cost = occs[0][1] if occs else 0
+        last_year  = occs[-1][0] if occs else goal_start_year(g)
+        out.append({
+            **g,
+            "start_year":      goal_start_year(g),
+            "end_year":        goal_end_year(g),
+            "occurrences":     occs,
+            "inflated_cost":   first_cost,   # cost at first occurrence
+            "cumulative_cost": total_cost,   # total across all occurrences
+            "last_year":       last_year,
+        })
     return out
 
 # ── Smart allocation: tagged assets first + retirement corpus as virtual asset ──
@@ -187,7 +238,7 @@ def smart_allocation():
         gname   = g["name"] or ""
         use_cum = g.get("cumulative", False)
         cost    = g["cumulative_cost"] if use_cum else g["inflated_cost"]
-        yr      = g["target_year"]
+        yr      = g["start_year"]   # project assets to when goal first hits
 
         tagged   = [a for a in st.session_state.assets if gname and gname in (a.get("tagged_goals") or [])]
         untagged = [a for a in st.session_state.assets if not (a.get("tagged_goals") or [])]
@@ -281,7 +332,8 @@ def get_recommendations():
 def import_goals_from_excel(uploaded_file):
     """
     Expected columns (case-insensitive):
-    Goal Name | Today's Cost | Inflation % | Target Year | Cumulative
+    Goal Name | Today's Cost | Inflation % | Start Year | End Year | Frequency (years) | Cumulative
+    Also accepts legacy "Target Year" mapped to Start Year.
     """
     try:
         df = pd.read_excel(uploaded_file)
@@ -290,7 +342,9 @@ def import_goals_from_excel(uploaded_file):
             "name":        ["goal name","name","goal"],
             "current_cost":["today's cost","cost","amount","current cost"],
             "inflation":   ["inflation %","inflation","inflation rate"],
-            "target_year": ["target year","year","years"],
+            "start_year":  ["start year","start","from year","target year","year"],
+            "end_year":    ["end year","end","to year","until year"],
+            "frequency":   ["frequency (years)","frequency","freq","every n years","recurrence"],
             "cumulative":  ["cumulative","cum"],
         }
         def find_col(df, options):
@@ -300,21 +354,27 @@ def import_goals_from_excel(uploaded_file):
 
         new_goals = []
         for _, row in df.iterrows():
-            g = {"name":"","current_cost":0,"inflation":6.0,"target_year":5,"cumulative":False}
+            g = {"name":"","current_cost":0,"inflation":6.0,
+                 "start_year":1,"end_year":1,"frequency":0,"cumulative":False}
             for field, options in col_map.items():
                 c = find_col(df, options)
                 if c and pd.notna(row[c]):
                     val = row[c]
-                    if field == "current_cost": g[field] = parse_indian(str(val))
-                    elif field in ("inflation",): g[field] = float(str(val).replace("%","").strip() or 6)
-                    elif field == "target_year":
-                        raw_yr = int(float(str(val).strip() or 5))
-                        # If value looks like a calendar year (e.g. 2035), convert to years from now
-                        if raw_yr > 100:
-                            raw_yr = max(raw_yr - TODAY.year, 1)
+                    if field == "current_cost":
+                        g[field] = parse_indian(str(val))
+                    elif field == "inflation":
+                        g[field] = float(str(val).replace("%","").strip() or 6)
+                    elif field in ("start_year","end_year"):
+                        raw_yr = int(float(str(val).strip() or 1))
+                        if raw_yr > 100: raw_yr = max(raw_yr - TODAY.year, 1)
                         g[field] = min(max(raw_yr, 1), 100)
-                    elif field == "cumulative":  g[field] = str(val).strip().lower() in ("true","yes","1","y")
-                    else: g[field] = str(val).strip()
+                    elif field == "frequency":
+                        g[field] = int(float(str(val).strip() or 0))
+                    elif field == "cumulative":
+                        g[field] = str(val).strip().lower() in ("true","yes","1","y")
+                    else:
+                        g[field] = str(val).strip()
+            g["end_year"] = max(g["end_year"], g["start_year"])
             new_goals.append(g)
         return new_goals, None
     except Exception as e:
@@ -567,6 +627,47 @@ tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_retire = st.tabs(
 # DASHBOARD
 # ══════════════════════════════════════════════════════
 with tab_dash:
+    # ── Instructions & Disclaimer ──
+    with st.expander("ℹ️ How to use this planner", expanded=False):
+        st.markdown("""
+**Get started in 4 steps:**
+
+**1. Income & Expenses tab**
+Add your monthly income sources (salary, rental, freelance) and monthly expenses (rent, groceries, EMIs).
+Each item has its own growth/inflation rate so projections stay realistic over time.
+
+**2. Goals tab**
+Add financial goals — a one-time goal like a home purchase, or a recurring goal like school fees.
+Set a start year, end year, frequency (every N years), and the cost in today's money.
+The app inflates the cost to the actual payment year(s) automatically.
+
+**3. Assets tab**
+Add your current investments and savings. For fixed instruments (FDs, bonds) enter the maturity amount
+and dates — CAGR is auto-calculated. Tag each asset to a goal so the app knows which money is earmarked
+for what. Optionally set up a SWP (systematic withdrawal) on an asset.
+
+**4. Retirement tab**
+Select your retirement goal, confirm the projected corpus, set a quarterly withdrawal, and the app
+simulates how long your corpus lasts — quarter by quarter — with tax-adjusted returns.
+
+---
+**Tips:**
+- Toggle **Cumulative** on a goal to see the total cost across all occurrences, not just one payment
+- The **Dashboard** updates in real time as you change any inputs
+- Use **💾 Save & Load** at the top to download your data and reload it next session
+- Import goals and assets in bulk via Excel using the import buttons in each tab
+
+---
+⚠️ **Disclaimer:** *This calculator is for personal planning and illustration purposes only.
+It does not constitute financial advice. All projections are estimates based on the inputs you provide
+and assumed rates — actual returns, inflation, and tax treatment may differ. Please consult a qualified
+financial advisor before making investment decisions.*
+
+🔒 **Privacy:** *This app does not store, transmit, or retain any of your data. All calculations happen
+locally in your browser session. Your data is lost when you close the tab unless you download it using
+the Save button above.*
+        """)
+
     c1,c2,c3,c4 = st.columns(4)
     c1.metric("Total Net Worth",  fmt(total_net_worth()))
     c2.metric("Monthly Income",   fmt(total_monthly_income()))
@@ -594,8 +695,11 @@ with tab_dash:
         col_info, col_bar = st.columns([1,2])
         with col_info:
             css = "badge-green" if g["pct"]>=100 else ("badge-amber" if g["pct"]>50 else "badge-red")
-            cost_label = "Cumulative cost" if g.get("cumulative") else "Inflated target"
-            st.markdown(f'**{g["name"]}** · Year {g["target_year"]}')
+            cost_label = "Cumulative cost" if g.get("cumulative") else "First occurrence cost"
+            freq = goal_frequency(g)
+            freq_str = f" · every {freq}yr" if freq > 0 else " · one-time"
+            yr_str = f"Yr {g['start_year']}–{g['end_year']}{freq_str}" if freq > 0 else f"Yr {g['start_year']}"
+            st.markdown(f'**{g["name"]}** · {yr_str}')
             st.markdown(f'{cost_label}: {fmt(g["display_cost"])} · Allocated: {fmt(g["allocated"])}')
             if g["tagged_assets"]:
                 st.caption(f'🏷️ {", ".join(g["tagged_assets"])} → {fmt(g["tagged_contrib"])} + untagged: {fmt(g["untagged_contrib"])}')
@@ -694,7 +798,10 @@ with tab_goals:
 
     # Excel import
     with st.expander("📥 Import Goals from Excel", expanded=False):
-        st.caption("Upload an .xlsx file with columns: Goal Name, Today's Cost, Inflation %, Target Year, Cumulative")
+        st.caption(
+            "Upload an .xlsx file with columns: Goal Name, Today's Cost, Inflation %, "
+            "Start Year, End Year, Frequency (years), Cumulative"
+        )
         goal_file = st.file_uploader("Upload Goals Excel", type=["xlsx","xls"], key=f"v{_v}_goal_upload")
         if goal_file:
             new_goals, err = import_goals_from_excel(goal_file)
@@ -712,30 +819,84 @@ with tab_goals:
                         st.session_state.goals.extend(new_goals)
                         st.session_state.data_version += 1; st.rerun()
 
+    # Column headers
     if st.session_state.goals:
-        hc = st.columns([3,2,1.5,1.5,1.5,0.8])
-        for h,lbl in zip(hc,["Goal Name","Today's Cost ₹/yr","Inflation %","Target Year","Cumulative",""]): h.caption(lbl)
+        hc = st.columns([2.5, 1.8, 1.2, 1.2, 1.2, 1.5, 1.2, 0.6])
+        for h, lbl in zip(hc, ["Goal Name", "Cost Today ₹", "Inflation %",
+                                "Start Yr", "End Yr", "Frequency (yrs)", "Cumulative", ""]):
+            h.caption(lbl)
+
     for i, g in enumerate(st.session_state.goals):
-        cols = st.columns([3,2,1.5,1.5,1.5,0.8])
-        with cols[0]: nn  = st.text_input("Name",  value=g["name"],        key=f"v{_v}_goal_name_{i}", label_visibility="collapsed", placeholder="e.g. Retirement")
-        with cols[1]: nc  = currency_input("Cost",  g["current_cost"],      key=f"v{_v}_goal_cost_{i}", label_visibility="collapsed")
-        with cols[2]: ni  = st.number_input("Inf%", value=g["inflation"],   key=f"v{_v}_goal_inf_{i}",  min_value=0.0, max_value=30.0, step=0.5, label_visibility="collapsed")
-        with cols[3]: ny  = st.number_input("Yr",   value=min(int(g["target_year"]), 100), key=f"v{_v}_goal_yr_{i}",   min_value=1, max_value=100, label_visibility="collapsed")
-        with cols[4]: ncu = st.checkbox("Cum",      value=g.get("cumulative",False), key=f"v{_v}_goal_cum_{i}", label_visibility="collapsed")
+        cols = st.columns([2.5, 1.8, 1.2, 1.2, 1.2, 1.5, 1.2, 0.6])
+        with cols[0]:
+            nn = st.text_input("Name", value=g["name"], key=f"v{_v}_goal_name_{i}",
+                label_visibility="collapsed", placeholder="e.g. School Fees")
+        with cols[1]:
+            nc = currency_input("Cost", g["current_cost"], key=f"v{_v}_goal_cost_{i}",
+                label_visibility="collapsed")
+        with cols[2]:
+            ni = st.number_input("Inf%", value=float(g.get("inflation", 6) or 6),
+                min_value=0.0, max_value=30.0, step=0.5,
+                key=f"v{_v}_goal_inf_{i}", label_visibility="collapsed")
+        with cols[3]:
+            ns = st.number_input("Start", value=int(g.get("start_year", 1) or 1),
+                min_value=1, max_value=100,
+                key=f"v{_v}_goal_start_{i}", label_visibility="collapsed")
+        with cols[4]:
+            ne = st.number_input("End", value=int(g.get("end_year", ns) or ns),
+                min_value=ns, max_value=100,
+                key=f"v{_v}_goal_end_{i}", label_visibility="collapsed")
         with cols[5]:
-            if st.button("🗑️", key=f"v{_v}_del_goal_{i}"): st.session_state.goals.pop(i); st.rerun()
-        st.session_state.goals[i].update({"name":nn,"current_cost":nc,"inflation":ni,"target_year":ny,"cumulative":ncu})
+            nf = st.number_input("Freq", value=int(g.get("frequency", 0) or 0),
+                min_value=0, max_value=50,
+                key=f"v{_v}_goal_freq_{i}", label_visibility="collapsed",
+                help="0 = one-time, 1 = annual, 2 = every 2 years, etc.")
+        with cols[6]:
+            ncu = st.checkbox("Cum", value=g.get("cumulative", False),
+                key=f"v{_v}_goal_cum_{i}", label_visibility="collapsed")
+        with cols[7]:
+            if st.button("🗑️", key=f"v{_v}_del_goal_{i}"):
+                st.session_state.goals.pop(i); st.rerun()
+
+        # Show inline summary of occurrences
+        occs = goal_occurrences({**g, "start_year": ns, "end_year": ne,
+                                  "frequency": nf, "inflation": ni, "current_cost": nc})
+        if nf > 0 and len(occs) > 0:
+            occ_preview = ", ".join(f"Yr {yr}: {fmt(c)}" for yr, c in occs[:4])
+            if len(occs) > 4: occ_preview += f" ... (+{len(occs)-4} more)"
+            total = sum(c for _, c in occs)
+            st.caption(f"↳ {len(occs)} payments — {occ_preview} · Total: **{fmt(total)}**")
+        elif len(occs) > 0:
+            st.caption(f"↳ One-time at Yr {occs[0][0]}: **{fmt(occs[0][1])}**")
+
+        st.session_state.goals[i].update({
+            "name": nn, "current_cost": nc, "inflation": ni,
+            "start_year": ns, "end_year": ne, "frequency": nf, "cumulative": ncu,
+        })
+
     if st.button("➕ Add Goal", key=f"v{_v}_add_goal"):
-        st.session_state.goals.append({"name":"","current_cost":0,"inflation":6.0,"target_year":5,"cumulative":False}); st.rerun()
+        st.session_state.goals.append({
+            "name": "", "current_cost": 0, "inflation": 6.0,
+            "start_year": 1, "end_year": 1, "frequency": 0, "cumulative": False,
+        }); st.rerun()
 
     if st.session_state.goals:
         st.markdown("### Projected Goal Costs")
-        proj=goal_projections(); rows=[]
+        proj = goal_projections(); rows = []
         for g in proj:
-            row={"Goal":g["name"] or "(unnamed)","Today's Cost":fmt_full(g["current_cost"]),
-                 "Inflation":f'{g["inflation"]}%',"Year":f'Yr {g["target_year"]}',
-                 "At Target Year":fmt(g["inflated_cost"])}
-            if g.get("cumulative"): row["Cumulative Total"]=fmt(g["cumulative_cost"])
+            freq = goal_frequency(g)
+            freq_str = f"Every {freq} yr(s)" if freq > 0 else "One-time"
+            row = {
+                "Goal":           g["name"] or "(unnamed)",
+                "Cost Today":     fmt_full(g["current_cost"]),
+                "Inflation":      f'{g["inflation"]}%',
+                "Start":          f'Yr {g["start_year"]}',
+                "End":            f'Yr {g["end_year"]}',
+                "Frequency":      freq_str,
+                "Occurrences":    len(g["occurrences"]),
+                "First Payment":  fmt(g["inflated_cost"]),
+                "Total Cost":     fmt(g["cumulative_cost"]),
+            }
             rows.append(row)
         st.dataframe(rows, width="stretch", hide_index=True)
 
