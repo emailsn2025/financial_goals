@@ -843,7 +843,8 @@ with tab_goals:
                 min_value=1, max_value=100,
                 key=f"v{_v}_goal_start_{i}", label_visibility="collapsed")
         with cols[4]:
-            ne = st.number_input("End", value=int(g.get("end_year", ns) or ns),
+            ne_val = max(int(g.get("end_year", ns) or ns), ns)
+            ne = st.number_input("End", value=ne_val,
                 min_value=ns, max_value=100,
                 key=f"v{_v}_goal_end_{i}", label_visibility="collapsed")
         with cols[5]:
