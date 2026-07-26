@@ -1406,7 +1406,8 @@ with tab_goals:
 # ASSETS
 # ══════════════════════════════════════════════════════
 with tab_assets:
-    if st.session_state.assets:
+    # Skip expensive per-asset chart with 62+ assets - shown in Dashboard instead
+    if st.session_state.assets and len(st.session_state.assets) <= 15:
         st.plotly_chart(asset_chart(), width="stretch")
 
     st.markdown("### 📈 Asset Portfolio")
@@ -1436,13 +1437,6 @@ with tab_assets:
                         st.session_state.data_version += 1; st.rerun()
 
     gnames = goal_names()
-
-    # Column headers
-    if st.session_state.assets:
-        hc = st.columns([2,1.2,1.2,1.4,1.4,1.4,1.2,1.8,1.2,1.2,0.5])
-        for h,lbl in zip(hc,["Asset Name","Class","Purchase Date","Invested ₹","Current Value ₹",
-                               "Maturity ₹","Maturity Date","Tag Goals","SWP ₹/mo","SWP Start Yr",""]):
-            h.caption(lbl)
 
     # ── Fast batch editor for all assets ──
     assets_df = pd.DataFrame([{
@@ -1532,39 +1526,39 @@ with tab_assets:
         _asset_value_at_year_cached.clear(); _compound_cached.clear()
 
     if st.session_state.assets:
-        st.markdown("### Asset Summary Table")
-        ai = avg_inflation(); rows=[]
-        for a in st.session_state.assets:
-            tags   = ", ".join(a.get("tagged_goals") or []) or "—"
-            swp    = f'{fmt(a.get("swp_monthly",0) or 0)}/mo Yr{a.get("swp_start_year",0) or 0}+' \
-                     if (a.get("swp_monthly") or 0) > 0 else "—"
-            inv    = a.get("invested",0) or 0
-            mat    = a.get("maturity_amt",0) or 0
-            net_m, tax_m = asset_net_maturity(inv, mat, a["asset_class"]) if (mat>0 and inv>0) else (0,0)
+        with st.expander(f"📊 Asset Summary Table ({len(st.session_state.assets)} assets) — click to expand", expanded=False):
+            ai = avg_inflation(); rows=[]
+            for a in st.session_state.assets:
+                tags   = ", ".join(a.get("tagged_goals") or []) or "—"
+                swp    = f'{fmt(a.get("swp_monthly",0) or 0)}/mo Yr{a.get("swp_start_year",0) or 0}+' \
+                         if (a.get("swp_monthly") or 0) > 0 else "—"
+                inv    = a.get("invested",0) or 0
+                mat    = a.get("maturity_amt",0) or 0
+                net_m, tax_m = asset_net_maturity(inv, mat, a["asset_class"]) if (mat>0 and inv>0) else (0,0)
+                rows.append({
+                    "Asset":         a["name"] or "(unnamed)",
+                    "Class":         a["asset_class"],
+                    "Purchase Date": a.get("purchase_date","") or "—",
+                    "Invested":      fmt_full(inv) if inv else "—",
+                    "Current Value": fmt_full(a["value"]),
+                    "Maturity Amt":  fmt(mat) if mat else "—",
+                    "Maturity Date": a.get("maturity_date","") or "—",
+                    "CAGR":          f'{a["cagr"]:.2f}%',
+                    "Tax on Gains":  fmt(tax_m) if tax_m else "—",
+                    "Net Maturity":  fmt(net_m) if net_m else "—",
+                    "Tagged Goals":  tags,
+                    "SWP":           swp,
+                    "5 Yrs":         fmt(asset_value_at_year(a, 5, ai)),
+                    "10 Yrs":        fmt(asset_value_at_year(a,10, ai)),
+                    "20 Yrs":        fmt(asset_value_at_year(a,20, ai)),
+                })
             rows.append({
-                "Asset":         a["name"] or "(unnamed)",
-                "Class":         a["asset_class"],
-                "Purchase Date": a.get("purchase_date","") or "—",
-                "Invested":      fmt_full(inv) if inv else "—",
-                "Current Value": fmt_full(a["value"]),
-                "Maturity Amt":  fmt(mat) if mat else "—",
-                "Maturity Date": a.get("maturity_date","") or "—",
-                "CAGR":          f'{a["cagr"]:.2f}%',
-                "Tax on Gains":  fmt(tax_m) if tax_m else "—",
-                "Net Maturity":  fmt(net_m) if net_m else "—",
-                "Tagged Goals":  tags,
-                "SWP":           swp,
-                "5 Yrs":         fmt(asset_value_at_year(a, 5, ai)),
-                "10 Yrs":        fmt(asset_value_at_year(a,10, ai)),
-                "20 Yrs":        fmt(asset_value_at_year(a,20, ai)),
+                "Asset":"Portfolio Total","Class":"","Purchase Date":"","Invested":"",
+                "Current Value":fmt_full(total_net_worth()),"Maturity Amt":"","Maturity Date":"",
+                "CAGR":f"{weighted_cagr():.1f}%","Tax on Gains":"","Net Maturity":"","Tagged Goals":"","SWP":"",
+                "5 Yrs":fmt(portfolio_at_year(5)),"10 Yrs":fmt(portfolio_at_year(10)),"20 Yrs":fmt(portfolio_at_year(20)),
             })
-        rows.append({
-            "Asset":"Portfolio Total","Class":"","Purchase Date":"","Invested":"",
-            "Current Value":fmt_full(total_net_worth()),"Maturity Amt":"","Maturity Date":"",
-            "CAGR":f"{weighted_cagr():.1f}%","Tax on Gains":"","Net Maturity":"","Tagged Goals":"","SWP":"",
-            "5 Yrs":fmt(portfolio_at_year(5)),"10 Yrs":fmt(portfolio_at_year(10)),"20 Yrs":fmt(portfolio_at_year(20)),
-        })
-        st.dataframe(rows, width="stretch", hide_index=True)
+            st.dataframe(rows, width="stretch", hide_index=True)
 
 # ══════════════════════════════════════════════════════
 # RETIREMENT TAB
