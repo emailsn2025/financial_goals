@@ -111,7 +111,7 @@ def asset_net_maturity(invested, maturity_amt, asset_class):
 # CACHED PURE COMPUTATION (no session state)
 # ══════════════════════════════════════════════════════
 
-@st.cache_data(max_entries=512)
+@st.cache_data(max_entries=2048)
 def _asset_value_at_year_cached(value, cagr, swp_monthly, swp_start_year, target_year, avg_inf):
     """
     Pure cached version of asset projection.
@@ -131,7 +131,7 @@ def _asset_value_at_year_cached(value, cagr, swp_monthly, swp_start_year, target
             if val < 0: val = 0; break
     return max(val, 0)
 
-@st.cache_data(max_entries=256)
+@st.cache_data(max_entries=1024)
 def _compound_cached(principal, rate_pct, years):
     return principal * (1 + rate_pct / 100) ** years
 
@@ -482,6 +482,83 @@ def import_assets_from_excel(uploaded_file):
 # CHARTS
 # ══════════════════════════════════════════════════════
 
+
+
+def import_income_from_excel(uploaded_file):
+    """Expected columns: Source | Monthly Rs | Growth %/yr | Start Year | End Year"""
+    try:
+        df = pd.read_excel(uploaded_file)
+        df.columns = [c.strip().lower() for c in df.columns]
+        col_map = {
+            "name":       ["source","name","income source","description"],
+            "monthly":    ["monthly rs","monthly","amount","monthly amount","rs","monthly ₹","₹"],
+            "growth":     ["growth %/yr","growth","growth rate","growth %","rate"],
+            "start_year": ["start year","start","from year","from"],
+            "end_year":   ["end year","end","to year","until","to"],
+        }
+        def find_col(df, options):
+            for o in options:
+                if o in df.columns: return o
+            return None
+        new_income = []
+        for _, row in df.iterrows():
+            inc = {"name":"","monthly":0,"growth":5.0,"start_year":THIS_YEAR,"end_year":THIS_YEAR+30}
+            for field, options in col_map.items():
+                c = find_col(df, options)
+                if c and pd.notna(row[c]):
+                    val = row[c]
+                    if field == "monthly": inc[field] = parse_indian(str(val))
+                    elif field == "growth": inc[field] = float(str(val).replace("%","").strip() or 5)
+                    elif field in ("start_year","end_year"):
+                        raw = int(float(str(val).strip() or THIS_YEAR))
+                        if raw <= 1000: raw = THIS_YEAR + raw
+                        inc[field] = max(2000, min(raw, 2100))
+                    else: inc[field] = str(val).strip()
+            inc["end_year"] = max(inc["end_year"], inc["start_year"])
+            new_income.append(inc)
+        return new_income, None
+    except Exception as e:
+        return [], str(e)
+
+
+def import_expenses_from_excel(uploaded_file):
+    """Expected columns: Name | Monthly Rs | Inflation % | Start Year | End Year | Cumulative"""
+    try:
+        df = pd.read_excel(uploaded_file)
+        df.columns = [c.strip().lower() for c in df.columns]
+        col_map = {
+            "name":       ["name","expense","description","category"],
+            "monthly":    ["monthly rs","monthly","amount","monthly amount","rs","monthly ₹","₹"],
+            "inflation":  ["inflation %","inflation","inflation rate","rate"],
+            "start_year": ["start year","start","from year","from"],
+            "end_year":   ["end year","end","to year","until","to"],
+            "cumulative": ["cumulative","cum"],
+        }
+        def find_col(df, options):
+            for o in options:
+                if o in df.columns: return o
+            return None
+        new_expenses = []
+        for _, row in df.iterrows():
+            exp = {"name":"","monthly":0,"inflation":6.0,"start_year":THIS_YEAR,"end_year":THIS_YEAR+30,"cumulative":False}
+            for field, options in col_map.items():
+                c = find_col(df, options)
+                if c and pd.notna(row[c]):
+                    val = row[c]
+                    if field == "monthly": exp[field] = parse_indian(str(val))
+                    elif field == "inflation": exp[field] = float(str(val).replace("%","").strip() or 6)
+                    elif field in ("start_year","end_year"):
+                        raw = int(float(str(val).strip() or THIS_YEAR))
+                        if raw <= 1000: raw = THIS_YEAR + raw
+                        exp[field] = max(2000, min(raw, 2100))
+                    elif field == "cumulative": exp[field] = str(val).strip().lower() in ("true","yes","1","y")
+                    else: exp[field] = str(val).strip()
+            exp["end_year"] = max(exp["end_year"], exp["start_year"])
+            new_expenses.append(exp)
+        return new_expenses, None
+    except Exception as e:
+        return [], str(e)
+
 def expense_income_chart():
     years = list(range(st.session_state.projection_years+1))
     fig   = go.Figure()
@@ -683,7 +760,12 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
                 d = st.session_state.pop("_pending_load")
                 for k in ["income","expenses","goals","assets","projection_years"]:
                     if k in d: st.session_state[k] = d[k]
-                st.session_state.data_version += 1; st.rerun()
+                # Clear cache so projections recalculate with new data
+                _asset_value_at_year_cached.clear()
+                _compound_cached.clear()
+                _goal_occurrences_cached.clear()
+                # Do NOT bump data_version — avoids resetting 700+ widget keys at once
+                st.rerun()
     with rc:
         if st.button("🔄 Reset to Empty", use_container_width=True):
             for k in ["income","expenses","goals","assets"]: st.session_state[k] = []
@@ -1006,6 +1088,23 @@ with tab_inc_exp:
 
     st.markdown("### 💰 Monthly Income Sources")
     st.caption(f"Total: {fmt_full(total_monthly_income())}/month")
+
+    with st.expander("📥 Import Income from Excel", expanded=False):
+        st.caption("Columns: Source | Monthly ₹ | Growth %/yr | Start Year | End Year")
+        inc_file = st.file_uploader("Upload Income Excel", type=["xlsx","xls"], key=f"v{_v}_inc_upload")
+        if inc_file:
+            new_inc, err = import_income_from_excel(inc_file)
+            if err:
+                st.error(f"Error: {err}")
+            else:
+                st.success(f"✓ Found {len(new_inc)} income sources.")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("Replace all income", key=f"v{_v}_inc_replace"):
+                        st.session_state.income = new_inc; st.rerun()
+                with c2:
+                    if st.button("Append to existing", key=f"v{_v}_inc_append"):
+                        st.session_state.income.extend(new_inc); st.rerun()
     if st.session_state.income:
         hc = st.columns([2.5, 1.8, 1.2, 1.5, 1.5, 0.6])
         for h,lbl in zip(hc,["Source","Monthly ₹","Growth %/yr","Start Year","End Year",""]): h.caption(lbl)
@@ -1025,14 +1124,14 @@ with tab_inc_exp:
             raw_is = int(inc.get("start_year", THIS_YEAR) or THIS_YEAR)
             if raw_is <= 1000: raw_is = THIS_YEAR + raw_is
             raw_is = max(2000, min(raw_is, 2100))
-            ns_cal = st.selectbox("Start", YEAR_OPTIONS, index=YEAR_OPTIONS.index(raw_is),
-                key=f"v{_v}_inc_start_{i}", label_visibility="collapsed")
+            ns_cal = st.number_input("Start", value=raw_is, min_value=2000, max_value=2100,
+                step=1, key=f"v{_v}_inc_start_{i}", label_visibility="collapsed")
         with cols[4]:
             raw_ie = int(inc.get("end_year", ns_cal) or ns_cal)
             if raw_ie <= 1000: raw_ie = THIS_YEAR + raw_ie
             raw_ie = max(ns_cal, min(raw_ie, 2100))
-            ne_cal = st.selectbox("End", YEAR_OPTIONS, index=YEAR_OPTIONS.index(raw_ie),
-                key=f"v{_v}_inc_end_{i}", label_visibility="collapsed")
+            ne_cal = st.number_input("End", value=raw_ie, min_value=ns_cal, max_value=2100,
+                step=1, key=f"v{_v}_inc_end_{i}", label_visibility="collapsed")
         with cols[5]:
             if st.button("🗑️", key=f"v{_v}_del_inc_{i}"):
                 st.session_state.income.pop(i); st.rerun()
@@ -1049,6 +1148,23 @@ with tab_inc_exp:
     st.divider()
     st.markdown("### 💸 Monthly Expenses")
     st.caption(f"Total: {fmt_full(total_monthly_expense())}/month · Avg inflation: {avg_inflation():.1f}%")
+
+    with st.expander("📥 Import Expenses from Excel", expanded=False):
+        st.caption("Columns: Name | Monthly ₹ | Inflation % | Start Year | End Year | Cumulative")
+        exp_file = st.file_uploader("Upload Expenses Excel", type=["xlsx","xls"], key=f"v{_v}_exp_upload")
+        if exp_file:
+            new_exp, err = import_expenses_from_excel(exp_file)
+            if err:
+                st.error(f"Error: {err}")
+            else:
+                st.success(f"✓ Found {len(new_exp)} expenses.")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("Replace all expenses", key=f"v{_v}_exp_replace"):
+                        st.session_state.expenses = new_exp; st.rerun()
+                with c2:
+                    if st.button("Append to existing", key=f"v{_v}_exp_append"):
+                        st.session_state.expenses.extend(new_exp); st.rerun()
     if st.session_state.expenses:
         hc = st.columns([2.5, 1.8, 1.2, 1.5, 1.5, 1.2, 0.6])
         for h,lbl in zip(hc,["Name","Monthly ₹","Inflation %","Start Year","End Year","Cumulative",""]): h.caption(lbl)
@@ -1067,14 +1183,14 @@ with tab_inc_exp:
             raw_es = int(e.get("start_year", THIS_YEAR) or THIS_YEAR)
             if raw_es <= 1000: raw_es = THIS_YEAR + raw_es
             raw_es = max(2000, min(raw_es, 2100))
-            es_cal = st.selectbox("Start", YEAR_OPTIONS, index=YEAR_OPTIONS.index(raw_es),
-                key=f"v{_v}_exp_start_{i}", label_visibility="collapsed")
+            es_cal = st.number_input("Start", value=raw_es, min_value=2000, max_value=2100,
+                step=1, key=f"v{_v}_exp_start_{i}", label_visibility="collapsed")
         with cols[4]:
             raw_ee = int(e.get("end_year", es_cal) or es_cal)
             if raw_ee <= 1000: raw_ee = THIS_YEAR + raw_ee
             raw_ee = max(es_cal, min(raw_ee, 2100))
-            ee_cal = st.selectbox("End", YEAR_OPTIONS, index=YEAR_OPTIONS.index(raw_ee),
-                key=f"v{_v}_exp_end_{i}", label_visibility="collapsed")
+            ee_cal = st.number_input("End", value=raw_ee, min_value=es_cal, max_value=2100,
+                step=1, key=f"v{_v}_exp_end_{i}", label_visibility="collapsed")
         with cols[5]:
             nc = st.checkbox("Cum", value=e.get("cumulative", False),
                 key=f"v{_v}_exp_cum_{i}", label_visibility="collapsed")
@@ -1099,14 +1215,14 @@ with tab_inc_exp:
         ph_start_raw = int(st.session_state.get("proj_start_year", THIS_YEAR) or THIS_YEAR)
         if ph_start_raw <= 1000: ph_start_raw = THIS_YEAR
         ph_start_raw = max(2000, min(ph_start_raw, 2100))
-        proj_start = st.selectbox("From", YEAR_OPTIONS,
-            index=YEAR_OPTIONS.index(ph_start_raw), key=f"v{_v}_proj_start")
+        proj_start = st.number_input("From", value=ph_start_raw,
+            min_value=2000, max_value=2100, step=1, key=f"v{_v}_proj_start")
     with ph_cols[1]:
         ph_end_raw = int(st.session_state.get("proj_end_year", THIS_YEAR + 30) or THIS_YEAR + 30)
         if ph_end_raw <= 1000: ph_end_raw = THIS_YEAR + ph_end_raw
         ph_end_raw = max(proj_start, min(ph_end_raw, 2100))
-        proj_end = st.selectbox("To", YEAR_OPTIONS,
-            index=YEAR_OPTIONS.index(ph_end_raw), key=f"v{_v}_proj_end")
+        proj_end = st.number_input("To", value=ph_end_raw,
+            min_value=proj_start, max_value=2100, step=1, key=f"v{_v}_proj_end")
     with ph_cols[2]:
         proj_span = max(proj_end - proj_start, 1)
         st.caption(f"Projecting {proj_span} years ({proj_start} – {proj_end})")
@@ -1173,13 +1289,13 @@ with tab_goals:
 
     # Column headers
     if st.session_state.goals:
-        hc = st.columns([2.5, 1.8, 1.2, 1.5, 1.5, 1.5, 1.2, 0.6])
+        hc = st.columns([2.5, 1.8, 1.2, 1.2, 1.2, 1.5, 1.2, 0.6])
         for h, lbl in zip(hc, ["Goal Name", "Cost Today ₹", "Inflation %",
                                 "Start Year", "End Year", "Frequency (yrs)", "Cumulative", ""]):
             h.caption(lbl)
 
     for i, g in enumerate(st.session_state.goals):
-        cols = st.columns([2.5, 1.8, 1.2, 1.5, 1.5, 1.5, 1.2, 0.6])
+        cols = st.columns([2.5, 1.8, 1.2, 1.2, 1.2, 1.5, 1.2, 0.6])
         with cols[0]:
             nn = st.text_input("Name", value=g["name"], key=f"v{_v}_goal_name_{i}",
                 label_visibility="collapsed", placeholder="e.g. School Fees")
@@ -1191,26 +1307,21 @@ with tab_goals:
                 min_value=0.0, max_value=30.0, step=0.5,
                 key=f"v{_v}_goal_inf_{i}", label_visibility="collapsed")
         with cols[3]:
-            # Stored value: calendar year (2000–2100)
+            # Fast number input instead of 101-item selectbox
             raw_start = int(g.get("start_year", THIS_YEAR) or THIS_YEAR)
-            # Migrate legacy relative years (e.g. 1–100) to calendar years
-            if raw_start <= 1000:
-                raw_start = THIS_YEAR + raw_start
+            if raw_start <= 1000: raw_start = THIS_YEAR + raw_start
             raw_start = max(2000, min(raw_start, 2100))
-            ns_cal = st.selectbox("Start Year", YEAR_OPTIONS,
-                index=YEAR_OPTIONS.index(raw_start),
+            ns_cal = st.number_input("Start", value=raw_start,
+                min_value=2000, max_value=2100, step=1,
                 key=f"v{_v}_goal_start_{i}", label_visibility="collapsed")
         with cols[4]:
             raw_end = int(g.get("end_year", ns_cal) or ns_cal)
-            if raw_end <= 1000:
-                raw_end = THIS_YEAR + raw_end
-            raw_end = max(ns_cal, min(raw_end, 2100))  # end >= start
-            ne_cal = st.selectbox("End Year", YEAR_OPTIONS,
-                index=YEAR_OPTIONS.index(raw_end),
+            if raw_end <= 1000: raw_end = THIS_YEAR + raw_end
+            raw_end = max(ns_cal, min(raw_end, 2100))
+            ne_cal = st.number_input("End", value=raw_end,
+                min_value=ns_cal, max_value=2100, step=1,
                 key=f"v{_v}_goal_end_{i}", label_visibility="collapsed")
-            # Clamp silently if end < start
-            if ne_cal < ns_cal:
-                ne_cal = ns_cal
+            if ne_cal < ns_cal: ne_cal = ns_cal
         with cols[5]:
             nf = st.number_input("Freq", value=int(g.get("frequency", 0) or 0),
                 min_value=0, max_value=50,
