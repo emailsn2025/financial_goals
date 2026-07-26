@@ -873,11 +873,8 @@ with tab_dash:
             st.progress(min(g["pct"],100)/100)
 
     if st.session_state.assets:
-        cl, cr = st.columns(2)
-        with cl: st.plotly_chart(nw_bar_chart(), width="stretch")
-        with cr:
-            pie = allocation_pie_chart()
-            if pie: st.plotly_chart(pie, width="stretch")
+        pie = allocation_pie_chart()
+        if pie: st.plotly_chart(pie, width="stretch")
         mc1,mc2,mc3 = st.columns(3)
         mc1.metric("Weighted CAGR",     f"{weighted_cagr():.1f}%")
         mc2.metric("Risk Profile",      risk_profile())
@@ -981,13 +978,13 @@ with tab_dash:
                         f"cost across all years. Tick Cumulative in the Goals tab for a realistic picture."
                     )
 
-        # TRUE surplus = FIFO remainder after all goals paid
-        # Re-run allocation to get the remainder after last goal
+        # TRUE surplus = FIFO remainder after all goals paid, discounted back to TODAY's value
         ai_now = avg_inflation()
         wcagr  = weighted_cagr()
         projs  = goal_projections()
         remaining = None
         prev_start = 0
+        last_yr = 0
         for g in projs:
             yr = goal_start_year(g)
             cost = alloc_map.get(g.get("name",""), {}).get("display_cost",
@@ -999,8 +996,14 @@ with tab_dash:
                 pool = remaining * compound(1, wcagr, gap) if gap > 0 and wcagr > 0 else remaining
             remaining  = max(pool - cost, 0)
             prev_start = yr
+            last_yr    = yr
 
-        surplus_today = remaining if remaining is not None else 0
+        # Discount the remaining future value back to today's money
+        remaining_future = remaining if remaining is not None else 0
+        if wcagr > 0 and last_yr > 0:
+            surplus_today = remaining_future / ((1 + wcagr/100) ** last_yr)
+        else:
+            surplus_today = remaining_future
 
         st.markdown("---")
         if all_fully_funded and surplus_today > 0:
@@ -1011,9 +1014,9 @@ with tab_dash:
                 f'<div style="color:#fff; font-size:20px; font-weight:700; margin-bottom:6px;">'
                 f'🎉 All Goals Fully Funded!</div>'
                 f'<div style="color:#d1fae5; font-size:14px; line-height:1.6;">'
-                f'After meeting every goal, your portfolio has an estimated surplus of '
+                f'After meeting every goal, your portfolio has an estimated surplus worth '
                 f'<strong style="color:#fff; font-size:17px;">{fmt(surplus_today)}</strong> '
-                f'at your last goal\'s year.<br/>'
+                f'<b>in today\'s money</b> (as of {THIS_YEAR}).<br/>'
                 f'<em style="color:#a7f3d0; font-size:12px;">Note: surplus accuracy depends on correct '
                 f'CAGRs and cumulative settings — see warnings above.</em>'
                 f'</div></div>',
@@ -1023,7 +1026,7 @@ with tab_dash:
             s1.metric("Net Worth Today",   fmt(total_net_worth()))
             s2.metric("Total Goal Cost",   fmt(total_cost_all))
             s3.metric("Weighted CAGR",     f"{weighted_cagr():.1f}%")
-            s4.metric("Est. Surplus",      fmt(surplus_today))
+            s4.metric("Surplus (Today's Money)", fmt(surplus_today))
 
         elif all_fully_funded and surplus_today <= 0:
             st.markdown(
@@ -1163,22 +1166,25 @@ with tab_inc_exp:
         }
     )
 
-    # Sync back to session state - only save on button click (avoids rerun loops)
+    # Sync back to session state
     new_inc_state = []
     for _, r in edited_inc.iterrows():
-        name = str(r.get("Source", "") or "").strip()
-        if not name and (r.get("Monthly ₹", 0) or 0) == 0: continue
+        raw_name = r.get("Source", "")
+        name = "" if pd.isna(raw_name) else str(raw_name).strip()
+        raw_monthly = r.get("Monthly ₹", 0)
+        monthly = 0 if pd.isna(raw_monthly) else int(raw_monthly)
+        if not name and monthly == 0: continue  # skip ghost/empty rows
         new_inc_state.append({
             "name":       name,
-            "monthly":    int(r.get("Monthly ₹", 0) or 0),
+            "monthly":    monthly,
             "growth":     float(r.get("Growth %/yr", 5.0) or 5.0),
             "start_year": int(r.get("Start Year", THIS_YEAR) or THIS_YEAR),
             "end_year":   int(r.get("End Year", THIS_YEAR + 30) or THIS_YEAR + 30),
         })
-    # Only update if genuinely different (compare by JSON to avoid numpy dtype issues)
+    # Only update if genuinely different — no cache clear needed, cache keys
+    # naturally differ when values differ (correctness doesn't require clearing)
     if json.dumps(new_inc_state, sort_keys=True) != json.dumps(st.session_state.income, sort_keys=True):
         st.session_state.income = new_inc_state
-        _asset_value_at_year_cached.clear(); _compound_cached.clear()
 
     st.divider()
     st.markdown("### 💸 Monthly Expenses")
@@ -1234,11 +1240,14 @@ with tab_inc_exp:
 
     new_exp_state = []
     for _, r in edited_exp.iterrows():
-        name = str(r.get("Name", "") or "").strip()
-        if not name and (r.get("Monthly ₹", 0) or 0) == 0: continue
+        raw_name = r.get("Name", "")
+        name = "" if pd.isna(raw_name) else str(raw_name).strip()
+        raw_monthly = r.get("Monthly ₹", 0)
+        monthly = 0 if pd.isna(raw_monthly) else int(raw_monthly)
+        if not name and monthly == 0: continue
         new_exp_state.append({
             "name":       name,
-            "monthly":    int(r.get("Monthly ₹", 0) or 0),
+            "monthly":    monthly,
             "inflation":  float(r.get("Inflation %", 6.0) or 6.0),
             "start_year": int(r.get("Start Year", THIS_YEAR) or THIS_YEAR),
             "end_year":   int(r.get("End Year", THIS_YEAR + 30) or THIS_YEAR + 30),
@@ -1246,7 +1255,6 @@ with tab_inc_exp:
         })
     if json.dumps(new_exp_state, sort_keys=True) != json.dumps(st.session_state.expenses, sort_keys=True):
         st.session_state.expenses = new_exp_state
-        _asset_value_at_year_cached.clear(); _compound_cached.clear()
 
     st.divider()
     # Projection horizon as calendar years
@@ -1362,14 +1370,17 @@ with tab_goals:
 
     new_goals_state = []
     for _, r in edited_goals.iterrows():
-        name = str(r.get("Goal Name", "") or "").strip()
-        if not name and (r.get("Cost Today ₹", 0) or 0) == 0: continue
+        raw_name = r.get("Goal Name", "")
+        name = "" if pd.isna(raw_name) else str(raw_name).strip()
+        raw_cost = r.get("Cost Today ₹", 0)
+        cost = 0 if pd.isna(raw_cost) else int(raw_cost)
+        if not name and cost == 0: continue
         sy = int(r.get("Start Year", THIS_YEAR + 5) or THIS_YEAR + 5)
         ey = int(r.get("End Year", sy) or sy)
         if ey < sy: ey = sy
         new_goals_state.append({
             "name":         name,
-            "current_cost": int(r.get("Cost Today ₹", 0) or 0),
+            "current_cost": cost,
             "inflation":    float(r.get("Inflation %", 6.0) or 6.0),
             "start_year":   sy,
             "end_year":     ey,
@@ -1378,7 +1389,6 @@ with tab_goals:
         })
     if json.dumps(new_goals_state, sort_keys=True) != json.dumps(st.session_state.goals, sort_keys=True):
         st.session_state.goals = new_goals_state
-        _asset_value_at_year_cached.clear(); _compound_cached.clear(); _goal_occurrences_cached.clear()
 
     if st.session_state.goals:
         st.markdown("### Projected Goal Costs")
@@ -1483,47 +1493,57 @@ with tab_assets:
     # Sync back to session state
     new_assets_state = []
     for _, r in edited_assets.iterrows():
-        name = str(r.get("Asset Name", "") or "").strip()
-        val  = int(r.get("Current Value ₹", 0) or 0)
-        if not name and val == 0: continue
+        raw_name = r.get("Asset Name", "")
+        name = "" if pd.isna(raw_name) else str(raw_name).strip()
+        raw_val = r.get("Current Value ₹", 0)
+        val = 0 if pd.isna(raw_val) else int(raw_val)
+        if not name and val == 0: continue  # skip ghost/empty rows from data_editor
 
-        # Auto-compute CAGR from maturity if provided
-        inv  = int(r.get("Invested ₹", 0) or 0)
-        mat  = int(r.get("Maturity ₹", 0) or 0)
-        pd_  = str(r.get("Purchase Date", "") or "").strip()
-        md_  = str(r.get("Maturity Date", "") or "").strip()
-        manual_cagr = float(r.get("CAGR %", 0.0) or 0.0)
+        raw_inv = r.get("Invested ₹", 0)
+        inv = 0 if pd.isna(raw_inv) else int(raw_inv)
+        raw_mat = r.get("Maturity ₹", 0)
+        mat = 0 if pd.isna(raw_mat) else int(raw_mat)
+        raw_pdate = r.get("Purchase Date", "")
+        pdate = "" if pd.isna(raw_pdate) else str(raw_pdate).strip()
+        raw_mdate = r.get("Maturity Date", "")
+        mdate = "" if pd.isna(raw_mdate) else str(raw_mdate).strip()
+        raw_cagr = r.get("CAGR %", 0.0)
+        manual_cagr = 0.0 if pd.isna(raw_cagr) else float(raw_cagr)
 
-        if mat > 0 and inv > 0 and md_:
-            auto = round(calc_asset_cagr(inv, mat, pd_ or str(TODAY), md_), 2)
+        if mat > 0 and inv > 0 and mdate:
+            auto = round(calc_asset_cagr(inv, mat, pdate or str(TODAY), mdate), 2)
             cagr = auto if auto > 0 else manual_cagr
         else:
             cagr = manual_cagr
 
-        # Parse tagged goals
-        tags_raw = str(r.get("Tag Goals", "") or "").strip()
+        raw_tags = r.get("Tag Goals", "")
+        tags_raw = "" if pd.isna(raw_tags) else str(raw_tags).strip()
         tags = [t.strip() for t in tags_raw.split(",") if t.strip() and t.strip() in gnames]
 
         cls = r.get("Class", "Equity")
-        if cls not in ASSET_CLASSES: cls = "Equity"
+        if pd.isna(cls) or cls not in ASSET_CLASSES: cls = "Equity"
+
+        raw_swp = r.get("SWP ₹/mo", 0)
+        swp = 0 if pd.isna(raw_swp) else int(raw_swp)
+        raw_swpyr = r.get("SWP Start Yr", 0)
+        swpyr = 0 if pd.isna(raw_swpyr) else int(raw_swpyr)
 
         new_assets_state.append({
             "name":           name,
             "asset_class":    cls,
-            "purchase_date":  pd_,
+            "purchase_date":  pdate,
             "invested":       inv,
             "value":          val,
             "maturity_amt":   mat,
-            "maturity_date":  md_,
+            "maturity_date":  mdate,
             "cagr":           cagr,
             "tagged_goals":   tags,
-            "swp_monthly":    int(r.get("SWP ₹/mo", 0) or 0),
-            "swp_start_year": int(r.get("SWP Start Yr", 0) or 0),
+            "swp_monthly":    swp,
+            "swp_start_year": swpyr,
         })
 
     if json.dumps(new_assets_state, sort_keys=True) != json.dumps(st.session_state.assets, sort_keys=True):
         st.session_state.assets = new_assets_state
-        _asset_value_at_year_cached.clear(); _compound_cached.clear()
 
     if st.session_state.assets:
         with st.expander(f"📊 Asset Summary Table ({len(st.session_state.assets)} assets) — click to expand", expanded=False):
