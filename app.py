@@ -217,13 +217,13 @@ def goal_frequency(g):
 
 @st.cache_data(max_entries=256)
 def _goal_occurrences_cached(base, inf, start, end, freq):
-    """Pure cached goal occurrence calculator."""
+    """Pure cached goal occurrence calculator. End year is exclusive."""
     occurrences = []
     if freq <= 0:
         occurrences.append((start, _compound_cached(base, inf, start)))
     else:
         yr = start
-        while yr <= end:
+        while yr < end:   # exclusive: 2027–2031 = 2027,2028,2029,2030 (4 payments)
             occurrences.append((yr, _compound_cached(base, inf, yr)))
             yr += freq
     return occurrences
