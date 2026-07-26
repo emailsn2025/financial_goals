@@ -1117,9 +1117,18 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
     sc, lc, rc = st.columns(3)
     with sc:
         st.download_button("⬇️ Download My Data",
-            data=json.dumps({"income":st.session_state.income,"expenses":st.session_state.expenses,
+            data=json.dumps({
+                "income":st.session_state.income, "expenses":st.session_state.expenses,
                 "projection_years":st.session_state.projection_years,
-                "goals":st.session_state.goals,"assets":st.session_state.assets}, indent=2),
+                "goals":st.session_state.goals, "assets":st.session_state.assets,
+                "ret_opening_corpus": st.session_state.get("ret_opening_corpus", 0),
+                "ret_goal_name":      st.session_state.get("ret_goal_name", ""),
+                "ret_annual_return":  st.session_state.get("ret_annual_return", 8.0),
+                "ret_tax_class":      st.session_state.get("ret_tax_class", "Equity"),
+                "ret_custom_tax":     st.session_state.get("ret_custom_tax", 0.0),
+                "ret_q_withdrawal":   st.session_state.get("ret_q_withdrawal", 0),
+                "ret_w_inflation":    st.session_state.get("ret_w_inflation", 6.0),
+            }, indent=2),
             file_name="financial_planner_data.json", mime="application/json", use_container_width=True)
     with lc:
         up = st.file_uploader("Load", type=["json"], label_visibility="collapsed")
@@ -1131,7 +1140,9 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
         if st.session_state.get("_pending_load"):
             if st.button("✅ Apply Loaded Data", use_container_width=True, type="primary"):
                 d = st.session_state.pop("_pending_load")
-                for k in ["income","expenses","goals","assets","projection_years"]:
+                for k in ["income","expenses","goals","assets","projection_years",
+                          "ret_opening_corpus","ret_goal_name","ret_annual_return",
+                          "ret_tax_class","ret_custom_tax","ret_q_withdrawal","ret_w_inflation"]:
                     if k in d: st.session_state[k] = d[k]
                 # Clear cache so projections recalculate with new data
                 _asset_value_at_year_cached.clear()
@@ -1144,6 +1155,13 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
         if st.button("🔄 Reset to Empty", use_container_width=True):
             for k in ["income","expenses","goals","assets"]: st.session_state[k] = []
             st.session_state.projection_years = 30
+            st.session_state.ret_opening_corpus = 0
+            st.session_state.ret_goal_name      = ""
+            st.session_state.ret_annual_return  = 8.0
+            st.session_state.ret_tax_class      = "Equity"
+            st.session_state.ret_custom_tax     = 0.0
+            st.session_state.ret_q_withdrawal   = 0
+            st.session_state.ret_w_inflation    = 6.0
             st.session_state.data_version += 1; st.rerun()
 
 with st.expander("📄 Export All Tabs to PDF", expanded=False):
@@ -1983,7 +2001,10 @@ with tab_retire:
             st.stop()
 
         default_idx = 0
-        if retire_goals:
+        saved_goal_name = st.session_state.get("ret_goal_name", "")
+        if saved_goal_name and saved_goal_name in goal_options:
+            default_idx = goal_options.index(saved_goal_name)
+        elif retire_goals:
             names = [g["name"] for g in all_goals]
             default_idx = names.index(retire_goals[0]["name"]) if retire_goals[0]["name"] in names else 0
 
@@ -2008,8 +2029,10 @@ with tab_retire:
             dominant_class   = "Equity"
             st.caption("No assets tagged to this goal. Enter corpus manually below.")
 
+        saved_corpus = st.session_state.get("ret_opening_corpus", 0) or 0
+        default_corpus = int(saved_corpus) if saved_corpus > 0 else (int(projected_corpus) if projected_corpus > 0 else 0)
         opening_corpus = currency_input("Opening Corpus ₹ (at retirement)",
-            int(projected_corpus) if projected_corpus > 0 else 0,
+            default_corpus,
             key=f"v{_v}_ret_corpus")
 
         # Push corpus into session state for dashboard allocation
@@ -2021,19 +2044,24 @@ with tab_retire:
         else:
             suggested_cagr = 8.0
 
+        saved_return = st.session_state.get("ret_annual_return", 0.0) or 0.0
+        default_return = round(saved_return, 1) if saved_return > 0 else round(suggested_cagr, 1)
         annual_return = st.number_input("Expected Annual Return %",
-            value=round(suggested_cagr,1), min_value=0.0, max_value=30.0, step=0.5,
+            value=default_return, min_value=0.0, max_value=30.0, step=0.5,
             key=f"v{_v}_ret_return")
 
+        saved_cls = st.session_state.get("ret_tax_class", "")
+        default_cls = saved_cls if saved_cls in ASSET_CLASSES else dominant_class
         asset_class_for_tax = st.selectbox("Asset Class (for LTCG tax rate)", ASSET_CLASSES,
-            index=ASSET_CLASSES.index(dominant_class) if dominant_class in ASSET_CLASSES else 1,
+            index=ASSET_CLASSES.index(default_cls) if default_cls in ASSET_CLASSES else 1,
             key=f"v{_v}_ret_cls")
 
         tax_rate_display = TAX_RATES.get(asset_class_for_tax, 0.30)
         st.caption(f"LTCG tax rate: **{tax_rate_display*100:.1f}%** — on gain portion only")
 
         custom_tax = st.number_input("Override Tax Rate % (0 = use default)",
-            value=0.0, min_value=0.0, max_value=50.0, step=0.5, key=f"v{_v}_ret_tax")
+            value=float(st.session_state.get("ret_custom_tax", 0.0) or 0.0),
+            min_value=0.0, max_value=50.0, step=0.5, key=f"v{_v}_ret_tax")
         effective_tax = (custom_tax/100) if custom_tax > 0 else None
 
         st.divider()
@@ -2041,15 +2069,19 @@ with tab_retire:
         monthly_exp = total_monthly_expense()
         suggested_qw = monthly_exp * 3 * (1 + ai/100) ** goal_year
 
+        saved_qw = st.session_state.get("ret_q_withdrawal", 0) or 0
+        default_qw = int(saved_qw) if saved_qw > 0 else (int(suggested_qw) if suggested_qw > 0 else 0)
         q_withdrawal = currency_input(
             "Quarterly Withdrawal ₹ (inflates annually)",
-            int(suggested_qw) if suggested_qw > 0 else 0,
+            default_qw,
             key=f"v{_v}_ret_qwd")
         if monthly_exp > 0:
             st.caption(f"Suggested: {fmt(suggested_qw)} (3× monthly expenses inflated to Yr {goal_year})")
 
+        saved_winf = st.session_state.get("ret_w_inflation", 0.0) or 0.0
+        default_winf = round(saved_winf, 1) if saved_winf > 0 else round(ai, 1)
         withdrawal_inflation = st.number_input("Withdrawal Inflation Rate %/yr",
-            value=round(ai,1), min_value=0.0, max_value=20.0, step=0.5, key=f"v{_v}_ret_winf")
+            value=default_winf, min_value=0.0, max_value=20.0, step=0.5, key=f"v{_v}_ret_winf")
 
         # Persist for PDF export and cross-tab reference
         st.session_state.ret_annual_return = annual_return
