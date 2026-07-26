@@ -821,6 +821,7 @@ def _fig_to_pdf_image(fig, width_cm=25, height_cm=9.5):
         return None
 
 
+def generate_full_pdf_report():
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=landscape(A4),
