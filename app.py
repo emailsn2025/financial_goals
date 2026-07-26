@@ -816,12 +816,12 @@ def _pdf_table(headers, rows, col_widths=None, font_size=7):
     ]))
     return t
 
-def _fig_to_pdf_image(fig, width_cm=25, height_cm=9.5):
+def _fig_to_pdf_image(fig, width_cm=25, height_cm=9.5, name="chart", errors=None):
     """
     Render a Plotly figure to a static PNG (via kaleido) and wrap it as a
-    reportlab Image flowable. Returns None if fig is None or rendering fails
-    for any reason (e.g. kaleido not installed) so the PDF can still be built
-    without that chart rather than crashing the whole export.
+    reportlab Image flowable. Returns None if fig is None or rendering fails.
+    On failure, appends (name, error_message) to the `errors` list (if given)
+    so the caller can surface it instead of silently dropping the chart.
     """
     if fig is None:
         return None
@@ -833,7 +833,9 @@ def _fig_to_pdf_image(fig, width_cm=25, height_cm=9.5):
         png_bytes = fig.to_image(format="png", width=1500,
                                   height=int(1500 * height_cm / width_cm), scale=2)
         return RLImage(io.BytesIO(png_bytes), width=width_cm*cm, height=height_cm*cm)
-    except Exception:
+    except Exception as e:
+        if errors is not None:
+            errors.append((name, f"{type(e).__name__}: {e}"))
         return None
 
 
@@ -856,6 +858,7 @@ def generate_full_pdf_report():
                                     textColor=colors.HexColor('#64748b'))
 
     story = []
+    chart_errors = []  # collects (chart_name, error_message) for any failed chart render
 
     # ── Cover ──
     story.append(Paragraph("Net Worth &amp; Goal Planner — Full Report", title_style))
@@ -876,8 +879,8 @@ def generate_full_pdf_report():
 
     if st.session_state.assets:
         chart_row = []
-        nw_img = _fig_to_pdf_image(nw_bar_chart(), width_cm=12, height_cm=7.5)
-        pie_img = _fig_to_pdf_image(allocation_pie_chart(), width_cm=12, height_cm=7.5)
+        nw_img = _fig_to_pdf_image(nw_bar_chart(), width_cm=12, height_cm=7.5, name="Net Worth Projection", errors=chart_errors)
+        pie_img = _fig_to_pdf_image(allocation_pie_chart(), width_cm=12, height_cm=7.5, name="Asset Allocation (Dashboard)", errors=chart_errors)
         imgs = [im for im in [nw_img, pie_img] if im is not None]
         if imgs:
             story.append(Table([imgs], colWidths=[12.5*cm]*len(imgs)))
@@ -942,7 +945,7 @@ def generate_full_pdf_report():
     # ── INCOME & EXPENSES ──
     story.append(Paragraph("Income &amp; Expenses", heading_style))
     if st.session_state.income or st.session_state.expenses:
-        ie_img = _fig_to_pdf_image(expense_income_chart(), width_cm=25, height_cm=9)
+        ie_img = _fig_to_pdf_image(expense_income_chart(), width_cm=25, height_cm=9, name="Income vs Expenses", errors=chart_errors)
         if ie_img:
             story.append(ie_img)
             story.append(Spacer(1, 8))
@@ -992,7 +995,7 @@ def generate_full_pdf_report():
     story.append(Spacer(1, 6))
     if st.session_state.assets:
         if len(st.session_state.assets) <= 20:
-            asset_img = _fig_to_pdf_image(asset_chart(), width_cm=25, height_cm=9)
+            asset_img = _fig_to_pdf_image(asset_chart(), width_cm=25, height_cm=9, name="Asset Growth Chart", errors=chart_errors)
             if asset_img:
                 story.append(asset_img)
                 story.append(Spacer(1, 8))
@@ -1002,8 +1005,8 @@ def generate_full_pdf_report():
                 f"many to render legibly. See the summary table below.)", caption_style))
             story.append(Spacer(1, 6))
 
-        type_pie_img = _fig_to_pdf_image(asset_type_pie_chart(), width_cm=12, height_cm=8)
-        class_pie_img = _fig_to_pdf_image(allocation_pie_chart(), width_cm=12, height_cm=8)
+        type_pie_img = _fig_to_pdf_image(asset_type_pie_chart(), width_cm=12, height_cm=8, name="Asset Allocation by Type", errors=chart_errors)
+        class_pie_img = _fig_to_pdf_image(allocation_pie_chart(), width_cm=12, height_cm=8, name="Asset Allocation by Class", errors=chart_errors)
         pie_imgs = [im for im in [class_pie_img, type_pie_img] if im is not None]
         if pie_imgs:
             story.append(Table([pie_imgs], colWidths=[12.5*cm]*len(pie_imgs)))
@@ -1059,7 +1062,7 @@ def generate_full_pdf_report():
             f"<b>Total Returns Earned:</b> {fmt(total_return)}", normal_style))
         story.append(Spacer(1, 8))
 
-        ret_img = _fig_to_pdf_image(retirement_drawdown_chart(rows_sim), width_cm=25, height_cm=9)
+        ret_img = _fig_to_pdf_image(retirement_drawdown_chart(rows_sim), width_cm=25, height_cm=9, name="Retirement Corpus Drawdown", errors=chart_errors)
         if ret_img:
             story.append(ret_img)
             story.append(Spacer(1, 8))
@@ -1090,9 +1093,18 @@ def generate_full_pdf_report():
     else:
         story.append(Paragraph("No retirement corpus configured yet — visit the Retirement tab to set it up.", normal_style))
 
+    if chart_errors:
+        story.append(PageBreak())
+        story.append(Paragraph("Notes", heading_style))
+        story.append(Paragraph(
+            f"{len(chart_errors)} chart(s) could not be rendered in this PDF (tables above are unaffected):",
+            normal_style))
+        for name, err in chart_errors:
+            story.append(Paragraph(f"• <b>{name}:</b> {err}", caption_style))
+
     doc.build(story)
     buffer.seek(0)
-    return buffer.getvalue()
+    return buffer.getvalue(), chart_errors
 
 
 
@@ -1193,9 +1205,19 @@ with st.expander("📄 Export All Tabs to PDF", expanded=False):
     if st.button("📄 Generate PDF Report", use_container_width=True, type="primary"):
         with st.spinner("Building PDF..."):
             try:
-                pdf_bytes = generate_full_pdf_report()
+                pdf_bytes, chart_errors = generate_full_pdf_report()
                 st.session_state["_pdf_ready"] = pdf_bytes
-                st.success("✓ Report ready — click below to download")
+                st.session_state["_pdf_chart_errors"] = chart_errors
+                if chart_errors:
+                    st.warning(
+                        f"✓ Report ready, but {len(chart_errors)} chart(s) could not be rendered "
+                        f"(tables are unaffected — details below). Click below to download anyway."
+                    )
+                    with st.expander("Chart rendering errors", expanded=True):
+                        for name, err in chart_errors:
+                            st.caption(f"**{name}:** {err}")
+                else:
+                    st.success("✓ Report ready — click below to download")
             except Exception as e:
                 st.error(f"Could not generate PDF: {e}")
     if st.session_state.get("_pdf_ready"):
