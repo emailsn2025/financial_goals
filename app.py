@@ -10,7 +10,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib import colors
 from reportlab.lib.units import cm
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image as RLImage
 from reportlab.lib.enums import TA_LEFT
 
 st.set_page_config(page_title="Net Worth & Goal Planner", page_icon="📊", layout="wide")
@@ -693,6 +693,31 @@ def nw_bar_chart():
         margin=dict(l=60,r=20,t=50,b=40), yaxis_title="₹")
     return fig
 
+def retirement_drawdown_chart(rows):
+    """Corpus vs quarterly withdrawal chart, built from retirement_simulation() rows."""
+    quarters_label  = [r["Quarter"] for r in rows]
+    corpus_vals     = [r["Opening Corpus"] for r in rows]
+    withdrawal_vals = [r["Withdrawal"] for r in rows]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=quarters_label, y=corpus_vals, name="Corpus",
+        fill="tozeroy", fillcolor="rgba(37,99,235,0.1)",
+        line=dict(color="#2563eb", width=2),
+        hovertemplate="₹%{y:,.0f}<extra>Corpus</extra>"))
+    fig.add_trace(go.Bar(x=quarters_label, y=withdrawal_vals, name="Quarterly Withdrawal",
+        marker_color="rgba(220,38,38,0.5)", yaxis="y2",
+        hovertemplate="₹%{y:,.0f}<extra>Withdrawal</extra>"))
+    fig.update_layout(
+        title="Corpus Drawdown Over Time",
+        xaxis=dict(title="Quarter", tickangle=-45,
+            tickvals=quarters_label[::4],
+            ticktext=[quarters_label[i] for i in range(0,len(quarters_label),4)]),
+        yaxis=dict(title="Corpus ₹", tickformat=","),
+        yaxis2=dict(title="Withdrawal ₹", overlaying="y", side="right", showgrid=False),
+        hovermode="x unified", template=None, height=420,
+        legend=dict(orientation="h", y=-0.25), margin=dict(l=60,r=60,t=50,b=80))
+    return fig
+
 # ══════════════════════════════════════════════════════
 # RETIREMENT SIMULATION
 # ══════════════════════════════════════════════════════
@@ -775,7 +800,27 @@ def _pdf_table(headers, rows, col_widths=None, font_size=7):
     ]))
     return t
 
-def generate_full_pdf_report():
+def _fig_to_pdf_image(fig, width_cm=25, height_cm=9.5):
+    """
+    Render a Plotly figure to a static PNG (via kaleido) and wrap it as a
+    reportlab Image flowable. Returns None if fig is None or rendering fails
+    for any reason (e.g. kaleido not installed) so the PDF can still be built
+    without that chart rather than crashing the whole export.
+    """
+    if fig is None:
+        return None
+    try:
+        # White background + no title margin issues when exported standalone
+        fig = go.Figure(fig)  # shallow copy so we don't mutate the on-screen chart
+        fig.update_layout(paper_bgcolor="white", plot_bgcolor="white",
+                           font=dict(color="#1e293b"))
+        png_bytes = fig.to_image(format="png", width=1500,
+                                  height=int(1500 * height_cm / width_cm), scale=2)
+        return RLImage(io.BytesIO(png_bytes), width=width_cm*cm, height=height_cm*cm)
+    except Exception:
+        return None
+
+
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=landscape(A4),
@@ -811,6 +856,15 @@ def generate_full_pdf_report():
         f"<b>Weighted CAGR:</b> {weighted_cagr():.1f}% &nbsp;&nbsp; "
         f"<b>Risk Profile:</b> {risk_profile()}", normal_style))
     story.append(Spacer(1, 8))
+
+    if st.session_state.assets:
+        chart_row = []
+        nw_img = _fig_to_pdf_image(nw_bar_chart(), width_cm=12, height_cm=7.5)
+        pie_img = _fig_to_pdf_image(allocation_pie_chart(), width_cm=12, height_cm=7.5)
+        imgs = [im for im in [nw_img, pie_img] if im is not None]
+        if imgs:
+            story.append(Table([imgs], colWidths=[12.5*cm]*len(imgs)))
+            story.append(Spacer(1, 8))
 
     if st.session_state.goals:
         story.append(Paragraph("Goal Summary", sub_style))
@@ -870,6 +924,11 @@ def generate_full_pdf_report():
 
     # ── INCOME & EXPENSES ──
     story.append(Paragraph("Income &amp; Expenses", heading_style))
+    if st.session_state.income or st.session_state.expenses:
+        ie_img = _fig_to_pdf_image(expense_income_chart(), width_cm=25, height_cm=9)
+        if ie_img:
+            story.append(ie_img)
+            story.append(Spacer(1, 8))
     if st.session_state.income:
         story.append(Paragraph("Monthly Income Sources", sub_style))
         headers = ["Source","Monthly ₹","Growth %/yr","Start Year","End Year"]
@@ -915,6 +974,16 @@ def generate_full_pdf_report():
         f"<b>Weighted CAGR:</b> {weighted_cagr():.1f}%", normal_style))
     story.append(Spacer(1, 6))
     if st.session_state.assets:
+        if len(st.session_state.assets) <= 20:
+            asset_img = _fig_to_pdf_image(asset_chart(), width_cm=25, height_cm=9)
+            if asset_img:
+                story.append(asset_img)
+                story.append(Spacer(1, 8))
+        else:
+            story.append(Paragraph(
+                f"(Per-asset growth chart omitted — {len(st.session_state.assets)} assets is too "
+                f"many to render legibly. See the summary table below.)", caption_style))
+            story.append(Spacer(1, 6))
         ai = avg_inflation()
         headers = ["Asset","Class","Current Value","CAGR","Tagged Goals","SWP","5 Yrs","10 Yrs","20 Yrs"]
         rows = []
@@ -964,6 +1033,11 @@ def generate_full_pdf_report():
             f"<b>Total Tax Paid:</b> {fmt(total_tax_paid)} &nbsp;&nbsp; "
             f"<b>Total Returns Earned:</b> {fmt(total_return)}", normal_style))
         story.append(Spacer(1, 8))
+
+        ret_img = _fig_to_pdf_image(retirement_drawdown_chart(rows_sim), width_cm=25, height_cm=9)
+        if ret_img:
+            story.append(ret_img)
+            story.append(Spacer(1, 8))
 
         # Annual summary table (aggregated from quarters, keeps PDF compact)
         annual = {}
@@ -2027,27 +2101,7 @@ Withdrawal inflates every year at your chosen rate.
         m3.metric("Total Tax Paid",      fmt(total_tax))
         m4.metric("Total Returns Earned",fmt(total_return))
 
-        quarters_label  = [r["Quarter"] for r in rows]
-        corpus_vals     = [r["Opening Corpus"] for r in rows]
-        withdrawal_vals = [r["Withdrawal"] for r in rows]
-
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=quarters_label, y=corpus_vals, name="Corpus",
-            fill="tozeroy", fillcolor="rgba(37,99,235,0.1)",
-            line=dict(color="#2563eb", width=2),
-            hovertemplate="₹%{y:,.0f}<extra>Corpus</extra>"))
-        fig.add_trace(go.Bar(x=quarters_label, y=withdrawal_vals, name="Quarterly Withdrawal",
-            marker_color="rgba(220,38,38,0.5)", yaxis="y2",
-            hovertemplate="₹%{y:,.0f}<extra>Withdrawal</extra>"))
-        fig.update_layout(
-            title="Corpus Drawdown Over Time",
-            xaxis=dict(title="Quarter", tickangle=-45,
-                tickvals=quarters_label[::4],
-                ticktext=[quarters_label[i] for i in range(0,len(quarters_label),4)]),
-            yaxis=dict(title="Corpus ₹", tickformat=","),
-            yaxis2=dict(title="Withdrawal ₹", overlaying="y", side="right", showgrid=False),
-            hovermode="x unified", template=None, height=420,
-            legend=dict(orientation="h", y=-0.25), margin=dict(l=60,r=60,t=50,b=80))
+        fig = retirement_drawdown_chart(rows)
         st.plotly_chart(fig, width="stretch")
 
         st.markdown("### Quarterly Drawdown Table")
