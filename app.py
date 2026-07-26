@@ -853,10 +853,14 @@ with tab_dash:
                 rec = "; ".join(tips).capitalize() if tips else "Review asset allocation"
 
             start_cal = g["start_year"] if g["start_year"] > 1000 else rel_to_cal(goal_start_year(g))
+            end_cal   = g["end_year"]   if g["end_year"]   > 1000 else rel_to_cal(goal_end_year(g))
+            freq      = goal_frequency(g)
             summary_rows.append({
                 "Goal":                        name,
                 "Start":                       str(start_cal),
-                "Target Cost":                 fmt(cost),
+                "End":                         str(end_cal) if freq > 0 or end_cal != start_cal else "—",
+                "Cumulative Cost":             fmt(g["cumulative_cost"]),
+                "Target Cost (Used)":          fmt(cost),
                 "Allocated":                   fmt(allocated),
                 "% Met":                       f"{pct}%",
                 "Status":                      alloc.get("status", "—"),
