@@ -66,13 +66,12 @@ def compound(principal, rate_pct, years):
     return _compound_cached(float(principal), float(rate_pct), float(years))
 
 def currency_input(label, value, key, **kwargs):
+    """Text input that displays Indian-formatted numbers."""
     parsed_val = int(round(value)) if value else 0
     display    = indian_format(parsed_val) if parsed_val else ""
-    raw = st.text_input(label, value=display, key=key, placeholder="e.g. 18,00,000", **kwargs)
-    result = parse_indian(raw)
-    if result >= 100000:
-        st.caption(f"= {fmt(result)}")
-    return result
+    raw = st.text_input(label, value=display, key=key,
+                        placeholder="e.g. 18,00,000", **kwargs)
+    return parse_indian(raw)
 
 def parse_date(s):
     """Parse a date string to a date object; return TODAY if blank/invalid."""
@@ -953,26 +952,54 @@ with tab_dash:
         st.dataframe(summary_rows, width="stretch", hide_index=True)
 
         # ── Surplus / Shortfall Banner ──
-        # Surplus = Today's Net Worth − PV of all goal costs discounted to today
-        # PV of each goal cost = display_cost / (1 + weighted_cagr)^years_to_goal
-        # This answers: "of my money TODAY, how much is reserved vs free?"
         alloc_list       = list(alloc_map.values())
         all_fully_funded = len(alloc_list) > 0 and all(g.get("pct", 0) >= 100 for g in alloc_list)
-        wcagr            = weighted_cagr() / 100
-        tnw_today        = total_net_worth()
-        ret_corpus_today = float(st.session_state.get("ret_opening_corpus", 0) or 0)
-        total_today      = tnw_today + ret_corpus_today
+        total_cost_all   = sum(g.get("display_cost", 0) for g in alloc_list)
 
-        # PV of each goal cost: how much you need to set aside TODAY to meet it
-        total_pv_needed  = 0.0
-        for g in goal_projections():
-            yrs  = max(goal_start_year(g), 1)
-            cost = alloc_map.get(g["name"] or "", {}).get("display_cost", g["inflated_cost"])
-            pv   = cost / ((1 + wcagr) ** yrs) if wcagr > 0 else cost
-            total_pv_needed += pv
+        # ── Data quality warnings (shown before surplus) ──
+        zero_cagr_val = sum(a.get("value",0) for a in st.session_state.assets
+                            if (a.get("cagr") or 0) == 0)
+        non_cum_recurring = [g for g in goal_projections()
+                             if goal_frequency(g) > 0 and not g.get("cumulative", False)]
+        if zero_cagr_val > 0 or non_cum_recurring:
+            with st.expander("⚠️ Data Quality Warnings — may affect surplus accuracy", expanded=True):
+                if zero_cagr_val > 0:
+                    st.warning(
+                        f"**{fmt(zero_cagr_val)} ({zero_cagr_val/max(total_net_worth(),1)*100:.0f}% of portfolio) "
+                        f"has 0% CAGR.** These assets earn nothing in projections, dragging down your "
+                        f"weighted CAGR to {weighted_cagr():.1f}%. Go to Assets tab and enter expected "
+                        f"returns for: " +
+                        ", ".join(a.get("name","?") for a in st.session_state.assets
+                                  if (a.get("cagr") or 0) == 0)[:200]
+                    )
+                if non_cum_recurring:
+                    names = ", ".join(g.get("name","?") for g in non_cum_recurring)
+                    st.warning(
+                        f"**Recurring goals without Cumulative ticked: {names}.** "
+                        f"The app is only funding the FIRST payment of these goals, not the total "
+                        f"cost across all years. Tick Cumulative in the Goals tab for a realistic picture."
+                    )
 
-        surplus_today = total_today - total_pv_needed
-        total_cost_all = sum(g.get("display_cost", 0) for g in alloc_list)
+        # TRUE surplus = FIFO remainder after all goals paid
+        # Re-run allocation to get the remainder after last goal
+        ai_now = avg_inflation()
+        wcagr  = weighted_cagr()
+        projs  = goal_projections()
+        remaining = None
+        prev_start = 0
+        for g in projs:
+            yr = goal_start_year(g)
+            cost = alloc_map.get(g.get("name",""), {}).get("display_cost",
+                   g.get("cumulative_cost") if g.get("cumulative") else g.get("inflated_cost", 0))
+            if remaining is None:
+                pool = sum(asset_value_at_year(a, yr, ai_now) for a in st.session_state.assets)
+            else:
+                gap  = yr - prev_start
+                pool = remaining * compound(1, wcagr, gap) if gap > 0 and wcagr > 0 else remaining
+            remaining  = max(pool - cost, 0)
+            prev_start = yr
+
+        surplus_today = remaining if remaining is not None else 0
 
         st.markdown("---")
         if all_fully_funded and surplus_today > 0:
@@ -983,20 +1010,19 @@ with tab_dash:
                 f'<div style="color:#fff; font-size:20px; font-weight:700; margin-bottom:6px;">'
                 f'🎉 All Goals Fully Funded!</div>'
                 f'<div style="color:#d1fae5; font-size:14px; line-height:1.6;">'
-                f'Every goal is covered. In <b style="color:#fff">today\'s money</b>, '
-                f'you have a surplus of '
+                f'After meeting every goal, your portfolio has an estimated surplus of '
                 f'<strong style="color:#fff; font-size:17px;">{fmt(surplus_today)}</strong> '
-                f'after reserving for all goals (PV at {weighted_cagr():.1f}% CAGR).<br/>'
-                f'Consider deploying the surplus into additional equity, topping up your '
-                f'retirement corpus, or creating a legacy fund.'
+                f'at your last goal\'s year.<br/>'
+                f'<em style="color:#a7f3d0; font-size:12px;">Note: surplus accuracy depends on correct '
+                f'CAGRs and cumulative settings — see warnings above.</em>'
                 f'</div></div>',
                 unsafe_allow_html=True,
             )
             s1, s2, s3, s4 = st.columns(4)
-            s1.metric("Net Worth Today",      fmt(tnw_today))
-            s2.metric("PV of All Goals",      fmt(total_pv_needed))
-            s3.metric("Today's Surplus",      fmt(surplus_today))
-            s4.metric("Goals Count",          str(len(alloc_list)))
+            s1.metric("Net Worth Today",   fmt(total_net_worth()))
+            s2.metric("Total Goal Cost",   fmt(total_cost_all))
+            s3.metric("Weighted CAGR",     f"{weighted_cagr():.1f}%")
+            s4.metric("Est. Surplus",      fmt(surplus_today))
 
         elif all_fully_funded and surplus_today <= 0:
             st.markdown(
@@ -1005,13 +1031,13 @@ with tab_dash:
                 f'<div style="color:#fff; font-size:20px; font-weight:700; margin-bottom:6px;">'
                 f'✅ All Goals Funded — Tight Fit</div>'
                 f'<div style="color:#bae6fd; font-size:14px;">'
-                f'All goals are met but with little headroom in today\'s money. '
+                f'All goals are met but with little headroom. '
                 f'Consider building a buffer against market volatility.'
                 f'</div></div>',
                 unsafe_allow_html=True,
             )
         elif len(alloc_list) > 0:
-            total_gap = sum(max(g.get("display_cost", 0) - g.get("allocated", 0), 0)
+            total_gap = sum(max(g.get("display_cost",0) - g.get("allocated",0), 0)
                             for g in alloc_list)
             st.markdown(
                 f'<div style="background:linear-gradient(135deg,#dc2626,#991b1b); '
