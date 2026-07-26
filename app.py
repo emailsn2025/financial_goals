@@ -265,6 +265,21 @@ def goal_projections():
         })
     return out
 
+def goal_npv(g, wcagr_pct):
+    """
+    Correct present value of a goal's cost stream: discount EACH occurrence
+    individually by its own number of years out, then sum. This is NOT the
+    same as discounting the cumulative (nominal) total by the first year only
+    — that overstates NPV substantially for multi-year recurring goals, since
+    it treats every future payment as if it were due at the first payment's
+    year.
+    """
+    occs = g.get("occurrences") or goal_occurrences(g)
+    if wcagr_pct <= 0:
+        return sum(cost for _, cost in occs)
+    r = wcagr_pct / 100
+    return sum(cost / ((1 + r) ** yr) if yr > 0 else cost for yr, cost in occs)
+
 # ── Smart allocation: tagged assets first + retirement corpus as virtual asset ──
 def smart_allocation():
     ai    = avg_inflation()
@@ -928,7 +943,10 @@ with tab_dash:
 
             allocated_future = min(pool, cost)
             allocated_today = allocated_future / ((1 + wcagr) ** yr) if wcagr > 0 and yr > 0 else allocated_future
-            npv_of_cost     = cost / ((1 + wcagr) ** yr) if wcagr > 0 and yr > 0 else cost
+            # NPV: correctly discount EACH occurrence individually and sum —
+            # NOT the nominal cumulative total discounted by a single year factor
+            # (that would overstate NPV several-fold for multi-year recurring goals)
+            npv_of_cost = goal_npv(g, wcagr_pct)
 
             today_value_by_goal[gname] = (cost, allocated_future, allocated_today, npv_of_cost)
 
@@ -940,6 +958,9 @@ with tab_dash:
         surplus_today = remaining_future / ((1 + wcagr) ** last_yr) if wcagr > 0 and last_yr > 0 else remaining_future
 
         summary_rows = []
+        tot_cumulative = tot_target = tot_npv = tot_allocated_today = tot_contrib = 0.0
+        tot_allocated = 0.0
+        fully_funded_count = 0
         for g in projs:
             name  = g["name"] or "(unnamed)"
             alloc = alloc_map.get(name, {})
@@ -959,6 +980,7 @@ with tab_dash:
             # Recommendation logic
             if pct >= 100:
                 rec = "✅ On track — maintain current allocation"
+                fully_funded_count += 1
             else:
                 tips = []
                 if eq_pct < 50 and years_left > 7:
@@ -988,6 +1010,29 @@ with tab_dash:
                 "Current Add'l Contribution Required": fmt(annual_contrib) if gap > 0 else "—",
                 "Recommendation":                    rec,
             })
+
+            tot_cumulative       += g["cumulative_cost"]
+            tot_target           += cost
+            tot_npv              += npv_of_cost
+            tot_allocated_today  += allocated_today
+            tot_allocated        += allocated
+            tot_contrib          += annual_contrib if gap > 0 else 0
+
+        # ── Total row ──
+        overall_pct = round((tot_allocated / tot_target) * 100) if tot_target > 0 else 0
+        summary_rows.append({
+            "Goal":                              "TOTAL",
+            "Start":                             "",
+            "End":                               "",
+            "Cumulative Cost":                   fmt(tot_cumulative),
+            "Target Cost (Used)":                fmt(tot_target),
+            "Net Present Value":                 fmt(tot_npv),
+            "Allocated from Current Corpus":     fmt(tot_allocated_today),
+            "% Met":                             f"{overall_pct}%",
+            "Status":                            f"{fully_funded_count}/{len(projs)} Fully Funded",
+            "Current Add'l Contribution Required": fmt(tot_contrib) if tot_contrib > 0 else "—",
+            "Recommendation":                    "—",
+        })
 
         st.dataframe(summary_rows, width="stretch", hide_index=True)
 
