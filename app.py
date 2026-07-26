@@ -763,7 +763,8 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
                 _asset_value_at_year_cached.clear()
                 _compound_cached.clear()
                 _goal_occurrences_cached.clear()
-                # Do NOT bump data_version — avoids resetting 700+ widget keys at once
+                # Bump version so data_editor widgets get fresh keys (forces clean rebuild)
+                st.session_state.data_version += 1
                 st.rerun()
     with rc:
         if st.button("🔄 Reset to Empty", use_container_width=True):
@@ -1152,7 +1153,7 @@ with tab_inc_exp:
         inc_df,
         num_rows="dynamic",
         use_container_width=True,
-        key=f"inc_editor",
+        key=f"inc_editor_v{_v}",
         column_config={
             "Source":      st.column_config.TextColumn("Source", width="large"),
             "Monthly ₹":   st.column_config.NumberColumn("Monthly ₹", format="%d", min_value=0),
@@ -1162,11 +1163,10 @@ with tab_inc_exp:
         }
     )
 
-    # Only sync back if user actually changed something
+    # Sync back to session state - only save on button click (avoids rerun loops)
     new_inc_state = []
     for _, r in edited_inc.iterrows():
         name = str(r.get("Source", "") or "").strip()
-        # Skip completely empty rows
         if not name and (r.get("Monthly ₹", 0) or 0) == 0: continue
         new_inc_state.append({
             "name":       name,
@@ -1175,7 +1175,8 @@ with tab_inc_exp:
             "start_year": int(r.get("Start Year", THIS_YEAR) or THIS_YEAR),
             "end_year":   int(r.get("End Year", THIS_YEAR + 30) or THIS_YEAR + 30),
         })
-    if new_inc_state != st.session_state.income:
+    # Only update if genuinely different (compare by JSON to avoid numpy dtype issues)
+    if json.dumps(new_inc_state, sort_keys=True) != json.dumps(st.session_state.income, sort_keys=True):
         st.session_state.income = new_inc_state
         _asset_value_at_year_cached.clear(); _compound_cached.clear()
 
@@ -1220,7 +1221,7 @@ with tab_inc_exp:
         exp_df,
         num_rows="dynamic",
         use_container_width=True,
-        key=f"exp_editor",
+        key=f"exp_editor_v{_v}",
         column_config={
             "Name":        st.column_config.TextColumn("Name", width="large"),
             "Monthly ₹":   st.column_config.NumberColumn("Monthly ₹", format="%d", min_value=0),
@@ -1243,7 +1244,7 @@ with tab_inc_exp:
             "end_year":   int(r.get("End Year", THIS_YEAR + 30) or THIS_YEAR + 30),
             "cumulative": bool(r.get("Cumulative", False)),
         })
-    if new_exp_state != st.session_state.expenses:
+    if json.dumps(new_exp_state, sort_keys=True) != json.dumps(st.session_state.expenses, sort_keys=True):
         st.session_state.expenses = new_exp_state
         _asset_value_at_year_cached.clear(); _compound_cached.clear()
 
@@ -1347,7 +1348,7 @@ with tab_goals:
         goals_df,
         num_rows="dynamic",
         use_container_width=True,
-        key=f"goals_editor",
+        key=f"goals_editor_v{_v}",
         column_config={
             "Goal Name":       st.column_config.TextColumn("Goal Name", width="large"),
             "Cost Today ₹":    st.column_config.NumberColumn("Cost Today ₹", format="%d", min_value=0),
@@ -1375,7 +1376,7 @@ with tab_goals:
             "frequency":    int(r.get("Frequency (yrs)", 0) or 0),
             "cumulative":   bool(r.get("Cumulative", False)),
         })
-    if new_goals_state != st.session_state.goals:
+    if json.dumps(new_goals_state, sort_keys=True) != json.dumps(st.session_state.goals, sort_keys=True):
         st.session_state.goals = new_goals_state
         _asset_value_at_year_cached.clear(); _compound_cached.clear(); _goal_occurrences_cached.clear()
 
@@ -1468,7 +1469,7 @@ with tab_assets:
         assets_df,
         num_rows="dynamic",
         use_container_width=True,
-        key="assets_editor",
+        key=f"assets_editor_v{_v}",
         height=min(400 + len(assets_df) * 8, 700),
         column_config={
             "Asset Name":      st.column_config.TextColumn("Asset Name", width="medium"),
@@ -1526,7 +1527,7 @@ with tab_assets:
             "swp_start_year": int(r.get("SWP Start Yr", 0) or 0),
         })
 
-    if new_assets_state != st.session_state.assets:
+    if json.dumps(new_assets_state, sort_keys=True) != json.dumps(st.session_state.assets, sort_keys=True):
         st.session_state.assets = new_assets_state
         _asset_value_at_year_cached.clear(); _compound_cached.clear()
 
