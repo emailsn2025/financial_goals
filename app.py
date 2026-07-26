@@ -871,19 +871,35 @@ with tab_dash:
         all_fully_funded = len(alloc_list) > 0 and all(g.get("pct", 0) >= 100 for g in alloc_list)
         total_cost_all   = sum(g.get("display_cost", 0) for g in alloc_list)
 
-        # True surplus = what the portfolio is worth at the earliest goal year minus total costs
-        # Use the last goal's year as the horizon for the total portfolio projection
-        if alloc_list:
+        # Surplus = what's left in the untagged pool after all goals are satisfied.
+        # Re-run the untagged filler logic to find the remainder.
+        ai_now   = avg_inflation()
+        untagged = [a for a in st.session_state.assets if not (a.get("tagged_goals") or [])]
+
+        if all_fully_funded and alloc_list:
+            # For each goal, subtract what was taken from the untagged pool
+            untagged_used = sum(g.get("untagged_contrib", 0) for g in alloc_list)
+            # Project untagged pool to the last goal year to get its full value
             max_goal_yr  = max(goal_start_year(g) for g in goal_projections())
-            ai_now       = avg_inflation()
-            total_port   = sum(asset_value_at_year(a, max_goal_yr, ai_now)
-                               for a in st.session_state.assets)
-            # Add retirement corpus if set
-            ret_corpus   = float(st.session_state.get("ret_opening_corpus", 0) or 0)
-            total_port  += ret_corpus
-            surplus_amt  = total_port - total_cost_all
+            untagged_val = sum(asset_value_at_year(a, max_goal_yr, ai_now) for a in untagged)
+            surplus_amt  = max(untagged_val - untagged_used, 0)
+
+            # Also add any tagged asset value that exceeded its goal's cost
+            for g in alloc_list:
+                tagged_for_goal = [a for a in st.session_state.assets
+                                   if g["name"] and g["name"] in (a.get("tagged_goals") or [])]
+                tagged_val = sum(asset_value_at_year(a, goal_start_year(g), ai_now)
+                                 for a in tagged_for_goal)
+                surplus_amt += max(tagged_val - g["display_cost"], 0)
+
+            ret_corpus_val = float(st.session_state.get("ret_opening_corpus", 0) or 0)
+            ret_goal_name  = st.session_state.get("ret_goal_name", "")
+            if ret_corpus_val > 0 and ret_goal_name:
+                ret_alloc = alloc_map.get(ret_goal_name, {})
+                surplus_amt += max(ret_corpus_val - ret_alloc.get("display_cost", 0), 0)
         else:
             surplus_amt  = 0
+            max_goal_yr  = 0
 
         st.markdown("---")
         if all_fully_funded and surplus_amt > 0:
@@ -894,18 +910,17 @@ with tab_dash:
                 f'<div style="color:#fff; font-size:20px; font-weight:700; margin-bottom:6px;">'
                 f'🎉 All Goals Fully Funded!</div>'
                 f'<div style="color:#d1fae5; font-size:14px; line-height:1.6;">'
-                f'Your portfolio covers every goal with an estimated surplus of '
-                f'<strong style="color:#fff; font-size:17px;">{fmt(surplus_amt)}</strong> '
-                f'at your longest goal horizon (Yr {max_goal_yr}).<br/>'
+                f'Every goal is covered. Estimated surplus after meeting all goals: '
+                f'<strong style="color:#fff; font-size:17px;">{fmt(surplus_amt)}</strong>.<br/>'
                 f'Consider deploying the surplus into additional equity, topping up your '
                 f'retirement corpus, or creating a legacy fund.'
                 f'</div></div>',
                 unsafe_allow_html=True,
             )
             s1, s2, s3 = st.columns(3)
-            s1.metric("Total Goal Cost",      fmt(total_cost_all))
-            s2.metric("Projected Portfolio",  fmt(total_port))
-            s3.metric("Surplus",              fmt(surplus_amt))
+            s1.metric("Total Goal Cost", fmt(total_cost_all))
+            s2.metric("Goals Count",     str(len(alloc_list)))
+            s3.metric("Est. Surplus",    fmt(surplus_amt))
 
         elif all_fully_funded and surplus_amt <= 0:
             st.markdown(
