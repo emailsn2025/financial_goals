@@ -157,6 +157,7 @@ for key, default in [
     ("income", []), ("expenses", []), ("goals", []), ("assets", []),
     ("projection_years", 30), ("data_version", 0),
     ("ret_opening_corpus", 0), ("ret_goal_name", ""),
+    ("proj_start_year", THIS_YEAR), ("proj_end_year", THIS_YEAR + 30),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -621,7 +622,7 @@ def retirement_simulation(opening_corpus, annual_return_pct, asset_class,
 # LAYOUT
 # ══════════════════════════════════════════════════════
 
-# ── Logo + title ──
+# ── Full-width header bar ──
 def get_logo_b64():
     logo_path = os.path.join(os.path.dirname(__file__), "shiftgaze_logo.jpg")
     if os.path.exists(logo_path):
@@ -630,22 +631,36 @@ def get_logo_b64():
     return None
 
 logo_b64 = get_logo_b64()
-title_col, logo_col = st.columns([3, 1])
-with title_col:
-    st.markdown("## 📊 Net Worth & Goal Planner")
-with logo_col:
-    if logo_b64:
-        st.markdown(
-            f'<div style="display:flex; justify-content:center; align-items:center; padding:6px;">'
-            f'<img src="data:image/jpeg;base64,{logo_b64}" style="'
-            f'height:90px; object-fit:contain; '
-            f'background:#000000; '
-            f'border: 3px solid #ffffff; '
-            f'border-radius: 10px; '
-            f'padding: 6px;'
-            f'"/></div>',
-            unsafe_allow_html=True,
-        )
+logo_html = (
+    f'<img src="data:image/jpeg;base64,{logo_b64}" '
+    f'style="height:70px; object-fit:contain; border-radius:8px;"/>'
+    if logo_b64 else ""
+)
+
+st.markdown(f"""
+<div style="
+    background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
+    padding: 16px 28px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+">
+    <div>
+        <div style="color:#ffffff; font-size:26px; font-weight:700; letter-spacing:-0.5px;">
+            📊 Net Worth &amp; Goal Planner
+        </div>
+        <div style="color:#94a3b8; font-size:13px; margin-top:3px;">
+            Project your finances · Track goals · Allocate assets
+        </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:12px;">
+        {logo_html}
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 with st.expander("💾 Save & Load Your Data", expanded=False):
     st.caption("Your data resets when you close this tab. Download to keep it safe.")
@@ -675,7 +690,60 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
             st.session_state.projection_years = 30
             st.session_state.data_version += 1; st.rerun()
 
-st.caption("Project your finances · Track goals · Allocate assets")
+st.markdown("""
+<div style="
+    background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
+    border-left: 4px solid #2563eb;
+    border-radius: 8px;
+    padding: 14px 20px;
+    margin-bottom: 12px;
+">
+<details>
+<summary style="color:#93c5fd; font-size:14px; font-weight:600; cursor:pointer; list-style:none;">
+    ℹ️ How to use this planner &nbsp;·&nbsp;
+    <span style="color:#64748b; font-weight:400; font-size:12px;">Click to expand</span>
+</summary>
+<div style="margin-top:12px; color:#cbd5e1; font-size:13px; line-height:1.7;">
+
+<b style="color:#93c5fd;">Step 1 — Income & Expenses</b><br/>
+Add monthly income sources (salary, rental, freelance) each with a growth rate and active years.
+Add monthly expenses (rent, groceries, EMIs) each with an inflation rate and active years.
+
+<br/><br/><b style="color:#93c5fd;">Step 2 — Goals</b><br/>
+Add financial goals with a cost in today's money, start year, end year, and recurrence frequency.
+One-time goals (home purchase) use the same start and end year. Recurring goals (school fees)
+set frequency to 1 for annual. The app inflates each payment to its actual year automatically.
+
+<br/><br/><b style="color:#93c5fd;">Step 3 — Assets</b><br/>
+Add investments and savings. For fixed instruments (FDs, bonds) enter maturity amount and dates —
+CAGR is auto-calculated. Tag each asset to a goal to earmark funds. Set up SWP if needed.
+
+<br/><br/><b style="color:#93c5fd;">Step 4 — Retirement</b><br/>
+Select your retirement goal, confirm the projected corpus, set a quarterly withdrawal.
+The app simulates how long the corpus lasts with tax-adjusted returns (12.5% equity, 30% debt).
+
+<br/><br/><b style="color:#93c5fd;">Tips</b><br/>
+• Toggle <b>Cumulative</b> on a goal to see total cost across all occurrences<br/>
+• Tag assets to goals for ring-fenced allocation on the Dashboard<br/>
+• Use <b>💾 Save & Load</b> above to download your data between sessions<br/>
+• Import goals and assets in bulk via Excel in each tab
+
+<br/><br/>
+<span style="color:#f59e0b;">⚠️ Disclaimer:</span>
+<span style="color:#94a3b8;"> This calculator is for personal planning only and does not constitute financial advice.
+Projections are estimates — actual returns, inflation and tax may differ.
+Consult a qualified financial advisor before making investment decisions.</span>
+
+<br/><br/>
+<span style="color:#34d399;">🔒 Privacy:</span>
+<span style="color:#94a3b8;"> This app does not store, transmit, or retain any of your data.
+Everything runs locally in your browser session. Data is lost when you close the tab
+unless you download it using the Save button above.</span>
+</div>
+</details>
+</div>
+""", unsafe_allow_html=True)
+
 tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_retire = st.tabs(
     ["Dashboard","Income & Expenses","Goals","Assets","🏖️ Retirement"])
 
@@ -683,47 +751,6 @@ tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_retire = st.tabs(
 # DASHBOARD
 # ══════════════════════════════════════════════════════
 with tab_dash:
-    # ── Instructions & Disclaimer ──
-    with st.expander("ℹ️ How to use this planner", expanded=False):
-        st.markdown("""
-**Get started in 4 steps:**
-
-**1. Income & Expenses tab**
-Add your monthly income sources (salary, rental, freelance) and monthly expenses (rent, groceries, EMIs).
-Each item has its own growth/inflation rate so projections stay realistic over time.
-
-**2. Goals tab**
-Add financial goals — a one-time goal like a home purchase, or a recurring goal like school fees.
-Set a start year, end year, frequency (every N years), and the cost in today's money.
-The app inflates the cost to the actual payment year(s) automatically.
-
-**3. Assets tab**
-Add your current investments and savings. For fixed instruments (FDs, bonds) enter the maturity amount
-and dates — CAGR is auto-calculated. Tag each asset to a goal so the app knows which money is earmarked
-for what. Optionally set up a SWP (systematic withdrawal) on an asset.
-
-**4. Retirement tab**
-Select your retirement goal, confirm the projected corpus, set a quarterly withdrawal, and the app
-simulates how long your corpus lasts — quarter by quarter — with tax-adjusted returns.
-
----
-**Tips:**
-- Toggle **Cumulative** on a goal to see the total cost across all occurrences, not just one payment
-- The **Dashboard** updates in real time as you change any inputs
-- Use **💾 Save & Load** at the top to download your data and reload it next session
-- Import goals and assets in bulk via Excel using the import buttons in each tab
-
----
-⚠️ **Disclaimer:** *This calculator is for personal planning and illustration purposes only.
-It does not constitute financial advice. All projections are estimates based on the inputs you provide
-and assumed rates — actual returns, inflation, and tax treatment may differ. Please consult a qualified
-financial advisor before making investment decisions.*
-
-🔒 **Privacy:** *This app does not store, transmit, or retain any of your data. All calculations happen
-locally in your browser session. Your data is lost when you close the tab unless you download it using
-the Save button above.*
-        """)
-
     c1,c2,c3,c4 = st.columns(4)
     c1.metric("Total Net Worth",  fmt(total_net_worth()))
     c2.metric("Monthly Income",   fmt(total_monthly_income()))
@@ -840,44 +867,73 @@ the Save button above.*
         st.dataframe(summary_rows, width="stretch", hide_index=True)
 
         # ── Surplus / Shortfall Banner ──
-        # Use numeric pct from alloc directly (not the string in summary_rows)
-        alloc_list      = list(alloc_map.values())
+        alloc_list       = list(alloc_map.values())
         all_fully_funded = len(alloc_list) > 0 and all(g.get("pct", 0) >= 100 for g in alloc_list)
-        total_cost_all  = sum(g.get("display_cost", 0) for g in alloc_list)
-        total_alloc_all = sum(g.get("allocated", 0)    for g in alloc_list)
-        surplus_amt     = total_alloc_all - total_cost_all
+        total_cost_all   = sum(g.get("display_cost", 0) for g in alloc_list)
 
+        # True surplus = what the portfolio is worth at the earliest goal year minus total costs
+        # Use the last goal's year as the horizon for the total portfolio projection
+        if alloc_list:
+            max_goal_yr  = max(goal_start_year(g) for g in goal_projections())
+            ai_now       = avg_inflation()
+            total_port   = sum(asset_value_at_year(a, max_goal_yr, ai_now)
+                               for a in st.session_state.assets)
+            # Add retirement corpus if set
+            ret_corpus   = float(st.session_state.get("ret_opening_corpus", 0) or 0)
+            total_port  += ret_corpus
+            surplus_amt  = total_port - total_cost_all
+        else:
+            surplus_amt  = 0
+
+        st.markdown("---")
         if all_fully_funded and surplus_amt > 0:
-            st.markdown("---")
             st.markdown(
-                f'<div style="background:#059669; border-radius:10px; padding:16px 20px; margin-top:8px;">'
-                f'<span style="color:#fff; font-size:18px; font-weight:700;">🎉 All Goals Fully Funded!</span><br/>'
-                f'<span style="color:#d1fae5; font-size:14px;">'
-                f'Your portfolio covers every goal with a surplus of '
-                f'<strong style="color:#fff; font-size:16px;">{fmt(surplus_amt)}</strong> remaining. '
-                f'Consider investing the surplus in additional wealth-building assets or topping up '
-                f'your retirement corpus.'
-                f'</span></div>',
+                f'<div style="background:linear-gradient(135deg,#059669,#047857); '
+                f'border-radius:10px; padding:18px 24px; margin-top:8px; '
+                f'box-shadow:0 4px 12px rgba(5,150,105,0.3);">'
+                f'<div style="color:#fff; font-size:20px; font-weight:700; margin-bottom:6px;">'
+                f'🎉 All Goals Fully Funded!</div>'
+                f'<div style="color:#d1fae5; font-size:14px; line-height:1.6;">'
+                f'Your portfolio covers every goal with an estimated surplus of '
+                f'<strong style="color:#fff; font-size:17px;">{fmt(surplus_amt)}</strong> '
+                f'at your longest goal horizon (Yr {max_goal_yr}).<br/>'
+                f'Consider deploying the surplus into additional equity, topping up your '
+                f'retirement corpus, or creating a legacy fund.'
+                f'</div></div>',
                 unsafe_allow_html=True,
             )
             s1, s2, s3 = st.columns(3)
-            s1.metric("Total Goal Cost",   fmt(total_cost_all))
-            s2.metric("Total Allocated",   fmt(total_alloc_all))
-            s3.metric("Portfolio Surplus", fmt(surplus_amt))
-        elif not all_fully_funded and len(alloc_list) > 0:
-            total_gap = sum(max(g.get("display_cost", 0) - g.get("allocated", 0), 0) for g in alloc_list)
-            if total_gap > 0:
-                st.markdown("---")
-                st.markdown(
-                    f'<div style="background:#dc2626; border-radius:10px; padding:16px 20px; margin-top:8px;">'
-                    f'<span style="color:#fff; font-size:18px; font-weight:700;">⚠️ Portfolio Shortfall</span><br/>'
-                    f'<span style="color:#fee2e2; font-size:14px;">'
-                    f'Total funding gap across all goals: '
-                    f'<strong style="color:#fff; font-size:16px;">{fmt(total_gap)}</strong>. '
-                    f'See the Add\'l Contribution column above for per-goal top-up amounts.'
-                    f'</span></div>',
-                    unsafe_allow_html=True,
-                )
+            s1.metric("Total Goal Cost",      fmt(total_cost_all))
+            s2.metric("Projected Portfolio",  fmt(total_port))
+            s3.metric("Surplus",              fmt(surplus_amt))
+
+        elif all_fully_funded and surplus_amt <= 0:
+            st.markdown(
+                f'<div style="background:linear-gradient(135deg,#0369a1,#0c4a6e); '
+                f'border-radius:10px; padding:18px 24px; margin-top:8px;">'
+                f'<div style="color:#fff; font-size:20px; font-weight:700; margin-bottom:6px;">'
+                f'✅ All Goals Funded — Tight Fit</div>'
+                f'<div style="color:#bae6fd; font-size:14px;">'
+                f'All goals are met but with little headroom. '
+                f'Consider building a buffer against market volatility.'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+        elif len(alloc_list) > 0:
+            total_gap = sum(max(g.get("display_cost", 0) - g.get("allocated", 0), 0)
+                            for g in alloc_list)
+            st.markdown(
+                f'<div style="background:linear-gradient(135deg,#dc2626,#991b1b); '
+                f'border-radius:10px; padding:18px 24px; margin-top:8px;">'
+                f'<div style="color:#fff; font-size:20px; font-weight:700; margin-bottom:6px;">'
+                f'⚠️ Portfolio Shortfall</div>'
+                f'<div style="color:#fee2e2; font-size:14px;">'
+                f'Total funding gap across all goals: '
+                f'<strong style="color:#fff; font-size:17px;">{fmt(total_gap)}</strong>.<br/>'
+                f'See the Add\'l Contribution column above for per-goal top-up amounts.'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
 
 # ══════════════════════════════════════════════════════
 # INCOME & EXPENSES
@@ -889,60 +945,139 @@ with tab_inc_exp:
     st.markdown("### 💰 Monthly Income Sources")
     st.caption(f"Total: {fmt_full(total_monthly_income())}/month")
     if st.session_state.income:
-        hc = st.columns([3,2,1.5,0.8])
-        for h,lbl in zip(hc,["Source","Monthly ₹","Growth %/yr",""]): h.caption(lbl)
+        hc = st.columns([2.5, 1.8, 1.2, 1.5, 1.5, 0.6])
+        for h,lbl in zip(hc,["Source","Monthly ₹","Growth %/yr","Start Year","End Year",""]): h.caption(lbl)
     for i, inc in enumerate(st.session_state.income):
-        cols = st.columns([3,2,1.5,0.8])
-        with cols[0]: nn = st.text_input("Source", value=inc["name"], key=f"v{_v}_inc_name_{i}", label_visibility="collapsed", placeholder="e.g. Salary")
-        with cols[1]: nm = currency_input("₹", inc["monthly"], key=f"v{_v}_inc_monthly_{i}", label_visibility="collapsed")
-        with cols[2]: ng = st.number_input("Growth%", value=inc.get("growth",5.0), min_value=0.0, max_value=30.0, step=0.5, key=f"v{_v}_inc_growth_{i}", label_visibility="collapsed")
+        cols = st.columns([2.5, 1.8, 1.2, 1.5, 1.5, 0.6])
+        with cols[0]:
+            nn = st.text_input("Source", value=inc["name"], key=f"v{_v}_inc_name_{i}",
+                label_visibility="collapsed", placeholder="e.g. Salary")
+        with cols[1]:
+            nm = currency_input("₹", inc["monthly"], key=f"v{_v}_inc_monthly_{i}",
+                label_visibility="collapsed")
+        with cols[2]:
+            ng = st.number_input("Growth%", value=inc.get("growth", 5.0),
+                min_value=0.0, max_value=30.0, step=0.5,
+                key=f"v{_v}_inc_growth_{i}", label_visibility="collapsed")
         with cols[3]:
-            if st.button("🗑️", key=f"v{_v}_del_inc_{i}"): st.session_state.income.pop(i); st.rerun()
-        st.session_state.income[i].update({"name":nn,"monthly":nm,"growth":ng})
+            raw_is = int(inc.get("start_year", THIS_YEAR) or THIS_YEAR)
+            if raw_is <= 1000: raw_is = THIS_YEAR + raw_is
+            raw_is = max(2000, min(raw_is, 2100))
+            ns_cal = st.selectbox("Start", YEAR_OPTIONS, index=YEAR_OPTIONS.index(raw_is),
+                key=f"v{_v}_inc_start_{i}", label_visibility="collapsed")
+        with cols[4]:
+            raw_ie = int(inc.get("end_year", ns_cal) or ns_cal)
+            if raw_ie <= 1000: raw_ie = THIS_YEAR + raw_ie
+            raw_ie = max(ns_cal, min(raw_ie, 2100))
+            ne_cal = st.selectbox("End", YEAR_OPTIONS, index=YEAR_OPTIONS.index(raw_ie),
+                key=f"v{_v}_inc_end_{i}", label_visibility="collapsed")
+        with cols[5]:
+            if st.button("🗑️", key=f"v{_v}_del_inc_{i}"):
+                st.session_state.income.pop(i); st.rerun()
+        st.session_state.income[i].update({
+            "name": nn, "monthly": nm, "growth": ng,
+            "start_year": ns_cal, "end_year": ne_cal,
+        })
     if st.button("➕ Add Income Source", key=f"v{_v}_add_inc"):
-        st.session_state.income.append({"name":"","monthly":0,"growth":5.0}); st.rerun()
+        st.session_state.income.append({
+            "name": "", "monthly": 0, "growth": 5.0,
+            "start_year": THIS_YEAR, "end_year": THIS_YEAR + 30,
+        }); st.rerun()
 
     st.divider()
     st.markdown("### 💸 Monthly Expenses")
     st.caption(f"Total: {fmt_full(total_monthly_expense())}/month · Avg inflation: {avg_inflation():.1f}%")
     if st.session_state.expenses:
-        hc = st.columns([3,2,1.5,1.5,0.8])
-        for h,lbl in zip(hc,["Name","Monthly ₹","Inflation %","Cumulative",""]): h.caption(lbl)
+        hc = st.columns([2.5, 1.8, 1.2, 1.5, 1.5, 1.2, 0.6])
+        for h,lbl in zip(hc,["Name","Monthly ₹","Inflation %","Start Year","End Year","Cumulative",""]): h.caption(lbl)
     for i, e in enumerate(st.session_state.expenses):
-        cols = st.columns([3,2,1.5,1.5,0.8])
-        with cols[0]: nn = st.text_input("Name", value=e["name"], key=f"v{_v}_exp_name_{i}", label_visibility="collapsed", placeholder="e.g. Rent")
-        with cols[1]: nm = currency_input("₹", e["monthly"], key=f"v{_v}_exp_monthly_{i}", label_visibility="collapsed")
-        with cols[2]: ni = st.number_input("Inf%", value=e["inflation"], min_value=0.0, max_value=30.0, step=0.5, key=f"v{_v}_exp_inf_{i}", label_visibility="collapsed")
-        with cols[3]: nc = st.checkbox("Cum", value=e.get("cumulative",False), key=f"v{_v}_exp_cum_{i}", label_visibility="collapsed")
+        cols = st.columns([2.5, 1.8, 1.2, 1.5, 1.5, 1.2, 0.6])
+        with cols[0]:
+            nn = st.text_input("Name", value=e["name"], key=f"v{_v}_exp_name_{i}",
+                label_visibility="collapsed", placeholder="e.g. Rent")
+        with cols[1]:
+            nm = currency_input("₹", e["monthly"], key=f"v{_v}_exp_monthly_{i}",
+                label_visibility="collapsed")
+        with cols[2]:
+            ni = st.number_input("Inf%", value=e["inflation"], min_value=0.0, max_value=30.0,
+                step=0.5, key=f"v{_v}_exp_inf_{i}", label_visibility="collapsed")
+        with cols[3]:
+            raw_es = int(e.get("start_year", THIS_YEAR) or THIS_YEAR)
+            if raw_es <= 1000: raw_es = THIS_YEAR + raw_es
+            raw_es = max(2000, min(raw_es, 2100))
+            es_cal = st.selectbox("Start", YEAR_OPTIONS, index=YEAR_OPTIONS.index(raw_es),
+                key=f"v{_v}_exp_start_{i}", label_visibility="collapsed")
         with cols[4]:
-            if st.button("🗑️", key=f"v{_v}_del_exp_{i}"): st.session_state.expenses.pop(i); st.rerun()
-        st.session_state.expenses[i].update({"name":nn,"monthly":nm,"inflation":ni,"cumulative":nc})
+            raw_ee = int(e.get("end_year", es_cal) or es_cal)
+            if raw_ee <= 1000: raw_ee = THIS_YEAR + raw_ee
+            raw_ee = max(es_cal, min(raw_ee, 2100))
+            ee_cal = st.selectbox("End", YEAR_OPTIONS, index=YEAR_OPTIONS.index(raw_ee),
+                key=f"v{_v}_exp_end_{i}", label_visibility="collapsed")
+        with cols[5]:
+            nc = st.checkbox("Cum", value=e.get("cumulative", False),
+                key=f"v{_v}_exp_cum_{i}", label_visibility="collapsed")
+        with cols[6]:
+            if st.button("🗑️", key=f"v{_v}_del_exp_{i}"):
+                st.session_state.expenses.pop(i); st.rerun()
+        st.session_state.expenses[i].update({
+            "name": nn, "monthly": nm, "inflation": ni,
+            "start_year": es_cal, "end_year": ee_cal, "cumulative": nc,
+        })
     if st.button("➕ Add Expense", key=f"v{_v}_add_exp"):
-        st.session_state.expenses.append({"name":"","monthly":0,"inflation":6.0}); st.rerun()
+        st.session_state.expenses.append({
+            "name": "", "monthly": 0, "inflation": 6.0,
+            "start_year": THIS_YEAR, "end_year": THIS_YEAR + 30,
+        }); st.rerun()
 
     st.divider()
-    st.session_state.projection_years = st.number_input(
-        "Projection Horizon (years)", min_value=1, max_value=50,
-        value=st.session_state.projection_years, key=f"v{_v}_proj_yrs")
+    # Projection horizon as calendar years
+    st.markdown("**Projection Horizon**")
+    ph_cols = st.columns([1.5, 1.5, 3])
+    with ph_cols[0]:
+        ph_start_raw = int(st.session_state.get("proj_start_year", THIS_YEAR) or THIS_YEAR)
+        if ph_start_raw <= 1000: ph_start_raw = THIS_YEAR
+        ph_start_raw = max(2000, min(ph_start_raw, 2100))
+        proj_start = st.selectbox("From", YEAR_OPTIONS,
+            index=YEAR_OPTIONS.index(ph_start_raw), key=f"v{_v}_proj_start")
+    with ph_cols[1]:
+        ph_end_raw = int(st.session_state.get("proj_end_year", THIS_YEAR + 30) or THIS_YEAR + 30)
+        if ph_end_raw <= 1000: ph_end_raw = THIS_YEAR + ph_end_raw
+        ph_end_raw = max(proj_start, min(ph_end_raw, 2100))
+        proj_end = st.selectbox("To", YEAR_OPTIONS,
+            index=YEAR_OPTIONS.index(ph_end_raw), key=f"v{_v}_proj_end")
+    with ph_cols[2]:
+        proj_span = max(proj_end - proj_start, 1)
+        st.caption(f"Projecting {proj_span} years ({proj_start} – {proj_end})")
+    st.session_state.proj_start_year = proj_start
+    st.session_state.proj_end_year   = proj_end
+    st.session_state.projection_years = proj_span
 
     if st.session_state.expenses:
         st.markdown("### Year-by-Year Expense Breakdown")
-        cum_track = {(e["name"] or f"e{i}"): 0.0 for i,e in enumerate(st.session_state.expenses)}
+        cum_track  = {(e["name"] or f"e{i}"): 0.0 for i,e in enumerate(st.session_state.expenses)}
         table_data = []
-        for y in [0,1,5,10,15,20,25,30]:
-            if y > st.session_state.projection_years: break
-            row = {"Year":"Today" if y==0 else f"Yr {y}"}; total=0
-            for i,e in enumerate(st.session_state.expenses):
+        milestones = sorted(set(
+            [proj_start] +
+            [proj_start + y for y in [1,5,10,15,20,25,30] if proj_start + y <= proj_end] +
+            [proj_end]
+        ))
+        for cal_y in milestones:
+            y = cal_y - proj_start
+            row = {"Year": str(cal_y)}; total = 0
+            for i, e in enumerate(st.session_state.expenses):
                 k = e["name"] or f"e{i}"
+                # Only show expense if active in this year
+                e_start = int(e.get("start_year", THIS_YEAR) or THIS_YEAR)
+                e_end   = int(e.get("end_year", 2100) or 2100)
+                if cal_y < e_start or cal_y > e_end:
+                    row[e["name"] or "—"] = "—"; continue
                 if e.get("cumulative"):
-                    prev=[0,1,5,10,15,20,25,30]; idx=prev.index(y)
-                    start=prev[idx-1]+1 if idx>0 else 0
-                    for yr in range(start,y+1): cum_track[k]+=compound(e["monthly"],e["inflation"],yr)*12
-                    row[e["name"] or "—"]=fmt(cum_track[k]); total+=cum_track[k]
+                    for yr in range(y): cum_track[k] += compound(e["monthly"], e["inflation"], yr) * 12
+                    row[e["name"] or "—"] = fmt(cum_track[k]); total += cum_track[k]
                 else:
-                    v=compound(e["monthly"],e["inflation"],y)
-                    row[e["name"] or "—"]=fmt_full(round(v)); total+=v
-            row["Total"]=fmt(total); table_data.append(row)
+                    v = compound(e["monthly"], e["inflation"], y)
+                    row[e["name"] or "—"] = fmt_full(round(v)); total += v
+            row["Total"] = fmt(total); table_data.append(row)
         st.dataframe(table_data, width="stretch", hide_index=True)
 
 # ══════════════════════════════════════════════════════
