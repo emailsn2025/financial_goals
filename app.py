@@ -473,7 +473,7 @@ def import_goals_from_excel(uploaded_file):
 def import_assets_from_excel(uploaded_file):
     """
     Expected columns (case-insensitive):
-    Asset Name | Class | Purchase Date | Invested Amount | Current Value |
+    Asset Name | Asset Type | Class | Purchase Date | Invested Amount | Current Value |
     Maturity Amount | Maturity Date | CAGR % | Tag Goals | SWP ₹/mo | SWP Start Yr
     """
     try:
@@ -481,7 +481,8 @@ def import_assets_from_excel(uploaded_file):
         df.columns = [c.strip().lower() for c in df.columns]
         col_map = {
             "name":           ["asset name","name","asset"],
-            "asset_class":    ["class","asset class","type"],
+            "asset_type":     ["asset type","type","instrument type","sub type","subtype","instrument"],
+            "asset_class":    ["class","asset class"],
             "purchase_date":  ["purchase date","buy date","date of purchase","start date"],
             "invested":       ["invested amount","invested","cost","purchase price","buy price"],
             "value":          ["current value","value","current","market value"],
@@ -500,7 +501,7 @@ def import_assets_from_excel(uploaded_file):
         new_assets = []
         for _, row in df.iterrows():
             a = {
-                "name":"","asset_class":"Equity","purchase_date":"","invested":0,
+                "name":"","asset_type":"","asset_class":"Equity","purchase_date":"","invested":0,
                 "value":0,"maturity_amt":0,"maturity_date":"","cagr":0.0,
                 "tagged_goals":[],"swp_monthly":0,"swp_start_year":0,
             }
@@ -680,6 +681,21 @@ def allocation_pie_chart():
         textinfo="label+percent", textposition="outside",
         hovertemplate="%{label}: ₹%{value:,.0f}<extra></extra>"))
     fig.update_layout(title="Asset Allocation", template=None, height=350,
+        margin=dict(l=20,r=20,t=50,b=20), showlegend=False)
+    return fig
+
+def asset_type_pie_chart():
+    ct = {}
+    for a in st.session_state.assets:
+        t = (a.get("asset_type") or "").strip() or "Unspecified"
+        ct[t] = ct.get(t, 0) + a["value"]
+    labels, values = list(ct.keys()), list(ct.values())
+    if not values: return None
+    fig = go.Figure(go.Pie(labels=labels, values=values, hole=0.45,
+        marker=dict(colors=LINE_COLORS[:len(labels)]),
+        textinfo="label+percent", textposition="outside",
+        hovertemplate="%{label}: ₹%{value:,.0f}<extra></extra>"))
+    fig.update_layout(title="Asset Allocation by Type", template=None, height=350,
         margin=dict(l=20,r=20,t=50,b=20), showlegend=False)
     return fig
 
@@ -985,19 +1001,27 @@ def generate_full_pdf_report():
                 f"(Per-asset growth chart omitted — {len(st.session_state.assets)} assets is too "
                 f"many to render legibly. See the summary table below.)", caption_style))
             story.append(Spacer(1, 6))
+
+        type_pie_img = _fig_to_pdf_image(asset_type_pie_chart(), width_cm=12, height_cm=8)
+        class_pie_img = _fig_to_pdf_image(allocation_pie_chart(), width_cm=12, height_cm=8)
+        pie_imgs = [im for im in [class_pie_img, type_pie_img] if im is not None]
+        if pie_imgs:
+            story.append(Table([pie_imgs], colWidths=[12.5*cm]*len(pie_imgs)))
+            story.append(Spacer(1, 8))
+
         ai = avg_inflation()
-        headers = ["Asset","Class","Current Value","CAGR","Tagged Goals","SWP","5 Yrs","10 Yrs","20 Yrs"]
+        headers = ["Asset","Type","Class","Current Value","CAGR","Tagged Goals","SWP","5 Yrs","10 Yrs","20 Yrs"]
         rows = []
         for a in st.session_state.assets:
             tags = ", ".join(a.get("tagged_goals") or []) or "—"
             swp  = f'{fmt(a.get("swp_monthly",0) or 0)}/mo Yr{a.get("swp_start_year",0) or 0}+' \
                    if (a.get("swp_monthly") or 0) > 0 else "—"
             rows.append([
-                a["name"] or "—", a["asset_class"], fmt_full(a["value"]), f'{a["cagr"]:.2f}%',
+                a["name"] or "—", a.get("asset_type","") or "—", a["asset_class"], fmt_full(a["value"]), f'{a["cagr"]:.2f}%',
                 tags, swp,
                 fmt(asset_value_at_year(a,5,ai)), fmt(asset_value_at_year(a,10,ai)), fmt(asset_value_at_year(a,20,ai)),
             ])
-        rows.append(["TOTAL","", fmt_full(total_net_worth()), f"{weighted_cagr():.1f}%", "", "",
+        rows.append(["TOTAL","","", fmt_full(total_net_worth()), f"{weighted_cagr():.1f}%", "", "",
                       fmt(portfolio_at_year(5)), fmt(portfolio_at_year(10)), fmt(portfolio_at_year(20))])
         story.append(_pdf_table(headers, rows, font_size=6.5))
     story.append(PageBreak())
@@ -1820,6 +1844,11 @@ with tab_assets:
     if st.session_state.assets and len(st.session_state.assets) <= 15:
         st.plotly_chart(asset_chart(), width="stretch")
 
+    if st.session_state.assets:
+        type_pie = asset_type_pie_chart()
+        if type_pie:
+            st.plotly_chart(type_pie, width="stretch")
+
     st.markdown("### 📈 Asset Portfolio")
     st.caption(f"Total: {fmt_full(total_net_worth())} · Weighted CAGR: {weighted_cagr():.1f}%")
 
@@ -1851,6 +1880,7 @@ with tab_assets:
     # ── Fast batch editor for all assets ──
     assets_df = pd.DataFrame([{
         "Asset Name":       a.get("name", ""),
+        "Asset Type":       a.get("asset_type", ""),
         "Class":            a.get("asset_class", "Equity") if a.get("asset_class") in ASSET_CLASSES else "Equity",
         "Purchase Date":    a.get("purchase_date", "") or "",
         "Invested ₹":       int(a.get("invested", 0) or 0),
@@ -1865,7 +1895,7 @@ with tab_assets:
 
     if assets_df.empty:
         assets_df = pd.DataFrame(columns=[
-            "Asset Name", "Class", "Purchase Date", "Invested ₹", "Current Value ₹",
+            "Asset Name", "Asset Type", "Class", "Purchase Date", "Invested ₹", "Current Value ₹",
             "Maturity ₹", "Maturity Date", "CAGR %", "Tag Goals", "SWP ₹/mo", "SWP Start Yr"
         ])
 
@@ -1877,6 +1907,7 @@ with tab_assets:
         height=min(400 + len(assets_df) * 8, 700),
         column_config={
             "Asset Name":      st.column_config.TextColumn("Asset Name", width="medium"),
+            "Asset Type":      st.column_config.TextColumn("Asset Type", width="medium", help="e.g. Mutual Fund, FD, PMS, Direct Equity, Sovereign Gold Bond"),
             "Class":           st.column_config.SelectboxColumn("Class", options=ASSET_CLASSES, required=True),
             "Purchase Date":   st.column_config.TextColumn("Purchase Date", help="DD/MM/YYYY"),
             "Invested ₹":      st.column_config.NumberColumn("Invested ₹", format="%d", min_value=0),
@@ -1898,6 +1929,9 @@ with tab_assets:
         raw_val = r.get("Current Value ₹", 0)
         val = 0 if pd.isna(raw_val) else int(raw_val)
         if not name and val == 0: continue  # skip ghost/empty rows from data_editor
+
+        raw_atype = r.get("Asset Type", "")
+        atype = "" if pd.isna(raw_atype) else str(raw_atype).strip()
 
         raw_inv = r.get("Invested ₹", 0)
         inv = 0 if pd.isna(raw_inv) else int(raw_inv)
@@ -1930,6 +1964,7 @@ with tab_assets:
 
         new_assets_state.append({
             "name":           name,
+            "asset_type":     atype,
             "asset_class":    cls,
             "purchase_date":  pdate,
             "invested":       inv,
@@ -1957,6 +1992,7 @@ with tab_assets:
                 net_m, tax_m = asset_net_maturity(inv, mat, a["asset_class"]) if (mat>0 and inv>0) else (0,0)
                 rows.append({
                     "Asset":         a["name"] or "(unnamed)",
+                    "Type":          a.get("asset_type","") or "—",
                     "Class":         a["asset_class"],
                     "Purchase Date": a.get("purchase_date","") or "—",
                     "Invested":      fmt_full(inv) if inv else "—",
@@ -1973,7 +2009,7 @@ with tab_assets:
                     "20 Yrs":        fmt(asset_value_at_year(a,20, ai)),
                 })
             rows.append({
-                "Asset":"Portfolio Total","Class":"","Purchase Date":"","Invested":"",
+                "Asset":"Portfolio Total","Type":"","Class":"","Purchase Date":"","Invested":"",
                 "Current Value":fmt_full(total_net_worth()),"Maturity Amt":"","Maturity Date":"",
                 "CAGR":f"{weighted_cagr():.1f}%","Tax on Gains":"","Net Maturity":"","Tagged Goals":"","SWP":"",
                 "5 Yrs":fmt(portfolio_at_year(5)),"10 Yrs":fmt(portfolio_at_year(10)),"20 Yrs":fmt(portfolio_at_year(20)),
