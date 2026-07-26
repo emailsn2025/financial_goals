@@ -1127,49 +1127,57 @@ with tab_inc_exp:
                 c1, c2 = st.columns(2)
                 with c1:
                     if st.button("Replace all income", key=f"v{_v}_inc_replace"):
-                        st.session_state.income = new_inc; st.rerun()
+                        st.session_state.income = new_inc
+                        _asset_value_at_year_cached.clear(); _compound_cached.clear()
+                        st.rerun()
                 with c2:
                     if st.button("Append to existing", key=f"v{_v}_inc_append"):
-                        st.session_state.income.extend(new_inc); st.rerun()
-    if st.session_state.income:
-        hc = st.columns([2.5, 1.8, 1.2, 1.5, 1.5, 0.6])
-        for h,lbl in zip(hc,["Source","Monthly ₹","Growth %/yr","Start Year","End Year",""]): h.caption(lbl)
-    for i, inc in enumerate(st.session_state.income):
-        cols = st.columns([2.5, 1.8, 1.2, 1.5, 1.5, 0.6])
-        with cols[0]:
-            nn = st.text_input("Source", value=inc["name"], key=f"v{_v}_inc_name_{i}",
-                label_visibility="collapsed", placeholder="e.g. Salary")
-        with cols[1]:
-            nm = currency_input("₹", inc["monthly"], key=f"v{_v}_inc_monthly_{i}",
-                label_visibility="collapsed")
-        with cols[2]:
-            ng = st.number_input("Growth%", value=inc.get("growth", 5.0),
-                min_value=0.0, max_value=30.0, step=0.5,
-                key=f"v{_v}_inc_growth_{i}", label_visibility="collapsed")
-        with cols[3]:
-            raw_is = int(inc.get("start_year", THIS_YEAR) or THIS_YEAR)
-            if raw_is <= 1000: raw_is = THIS_YEAR + raw_is
-            raw_is = max(2000, min(raw_is, 2100))
-            ns_cal = st.number_input("Start", value=raw_is, min_value=2000, max_value=2100,
-                step=1, key=f"v{_v}_inc_start_{i}", label_visibility="collapsed")
-        with cols[4]:
-            raw_ie = int(inc.get("end_year", ns_cal) or ns_cal)
-            if raw_ie <= 1000: raw_ie = THIS_YEAR + raw_ie
-            raw_ie = max(ns_cal, min(raw_ie, 2100))
-            ne_cal = st.number_input("End", value=raw_ie, min_value=ns_cal, max_value=2100,
-                step=1, key=f"v{_v}_inc_end_{i}", label_visibility="collapsed")
-        with cols[5]:
-            if st.button("🗑️", key=f"v{_v}_del_inc_{i}"):
-                st.session_state.income.pop(i); st.rerun()
-        st.session_state.income[i].update({
-            "name": nn, "monthly": nm, "growth": ng,
-            "start_year": ns_cal, "end_year": ne_cal,
+                        st.session_state.income.extend(new_inc)
+                        _asset_value_at_year_cached.clear(); _compound_cached.clear()
+                        st.rerun()
+
+    # ── Fast batch editor ──
+    inc_df = pd.DataFrame([{
+        "Source":       inc.get("name", ""),
+        "Monthly ₹":    int(inc.get("monthly", 0) or 0),
+        "Growth %/yr":  float(inc.get("growth", 5.0) or 5.0),
+        "Start Year":   int(inc.get("start_year", THIS_YEAR) or THIS_YEAR),
+        "End Year":     int(inc.get("end_year", THIS_YEAR + 30) or THIS_YEAR + 30),
+    } for inc in st.session_state.income])
+
+    if inc_df.empty:
+        inc_df = pd.DataFrame(columns=["Source", "Monthly ₹", "Growth %/yr", "Start Year", "End Year"])
+
+    edited_inc = st.data_editor(
+        inc_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        key=f"inc_editor",
+        column_config={
+            "Source":      st.column_config.TextColumn("Source", width="large"),
+            "Monthly ₹":   st.column_config.NumberColumn("Monthly ₹", format="%d", min_value=0),
+            "Growth %/yr": st.column_config.NumberColumn("Growth %/yr", format="%.1f", min_value=0.0, max_value=30.0, step=0.5),
+            "Start Year":  st.column_config.NumberColumn("Start Year", format="%d", min_value=2000, max_value=2100, step=1),
+            "End Year":    st.column_config.NumberColumn("End Year", format="%d", min_value=2000, max_value=2100, step=1),
+        }
+    )
+
+    # Only sync back if user actually changed something
+    new_inc_state = []
+    for _, r in edited_inc.iterrows():
+        name = str(r.get("Source", "") or "").strip()
+        # Skip completely empty rows
+        if not name and (r.get("Monthly ₹", 0) or 0) == 0: continue
+        new_inc_state.append({
+            "name":       name,
+            "monthly":    int(r.get("Monthly ₹", 0) or 0),
+            "growth":     float(r.get("Growth %/yr", 5.0) or 5.0),
+            "start_year": int(r.get("Start Year", THIS_YEAR) or THIS_YEAR),
+            "end_year":   int(r.get("End Year", THIS_YEAR + 30) or THIS_YEAR + 30),
         })
-    if st.button("➕ Add Income Source", key=f"v{_v}_add_inc"):
-        st.session_state.income.append({
-            "name": "", "monthly": 0, "growth": 5.0,
-            "start_year": THIS_YEAR, "end_year": THIS_YEAR + 30,
-        }); st.rerun()
+    if new_inc_state != st.session_state.income:
+        st.session_state.income = new_inc_state
+        _asset_value_at_year_cached.clear(); _compound_cached.clear()
 
     st.divider()
     st.markdown("### 💸 Monthly Expenses")
@@ -1187,51 +1195,57 @@ with tab_inc_exp:
                 c1, c2 = st.columns(2)
                 with c1:
                     if st.button("Replace all expenses", key=f"v{_v}_exp_replace"):
-                        st.session_state.expenses = new_exp; st.rerun()
+                        st.session_state.expenses = new_exp
+                        _asset_value_at_year_cached.clear(); _compound_cached.clear()
+                        st.rerun()
                 with c2:
                     if st.button("Append to existing", key=f"v{_v}_exp_append"):
-                        st.session_state.expenses.extend(new_exp); st.rerun()
-    if st.session_state.expenses:
-        hc = st.columns([2.5, 1.8, 1.2, 1.5, 1.5, 1.2, 0.6])
-        for h,lbl in zip(hc,["Name","Monthly ₹","Inflation %","Start Year","End Year","Cumulative",""]): h.caption(lbl)
-    for i, e in enumerate(st.session_state.expenses):
-        cols = st.columns([2.5, 1.8, 1.2, 1.5, 1.5, 1.2, 0.6])
-        with cols[0]:
-            nn = st.text_input("Name", value=e["name"], key=f"v{_v}_exp_name_{i}",
-                label_visibility="collapsed", placeholder="e.g. Rent")
-        with cols[1]:
-            nm = currency_input("₹", e["monthly"], key=f"v{_v}_exp_monthly_{i}",
-                label_visibility="collapsed")
-        with cols[2]:
-            ni = st.number_input("Inf%", value=e["inflation"], min_value=0.0, max_value=30.0,
-                step=0.5, key=f"v{_v}_exp_inf_{i}", label_visibility="collapsed")
-        with cols[3]:
-            raw_es = int(e.get("start_year", THIS_YEAR) or THIS_YEAR)
-            if raw_es <= 1000: raw_es = THIS_YEAR + raw_es
-            raw_es = max(2000, min(raw_es, 2100))
-            es_cal = st.number_input("Start", value=raw_es, min_value=2000, max_value=2100,
-                step=1, key=f"v{_v}_exp_start_{i}", label_visibility="collapsed")
-        with cols[4]:
-            raw_ee = int(e.get("end_year", es_cal) or es_cal)
-            if raw_ee <= 1000: raw_ee = THIS_YEAR + raw_ee
-            raw_ee = max(es_cal, min(raw_ee, 2100))
-            ee_cal = st.number_input("End", value=raw_ee, min_value=es_cal, max_value=2100,
-                step=1, key=f"v{_v}_exp_end_{i}", label_visibility="collapsed")
-        with cols[5]:
-            nc = st.checkbox("Cum", value=e.get("cumulative", False),
-                key=f"v{_v}_exp_cum_{i}", label_visibility="collapsed")
-        with cols[6]:
-            if st.button("🗑️", key=f"v{_v}_del_exp_{i}"):
-                st.session_state.expenses.pop(i); st.rerun()
-        st.session_state.expenses[i].update({
-            "name": nn, "monthly": nm, "inflation": ni,
-            "start_year": es_cal, "end_year": ee_cal, "cumulative": nc,
+                        st.session_state.expenses.extend(new_exp)
+                        _asset_value_at_year_cached.clear(); _compound_cached.clear()
+                        st.rerun()
+
+    exp_df = pd.DataFrame([{
+        "Name":         e.get("name", ""),
+        "Monthly ₹":    int(e.get("monthly", 0) or 0),
+        "Inflation %":  float(e.get("inflation", 6.0) or 6.0),
+        "Start Year":   int(e.get("start_year", THIS_YEAR) or THIS_YEAR),
+        "End Year":     int(e.get("end_year", THIS_YEAR + 30) or THIS_YEAR + 30),
+        "Cumulative":   bool(e.get("cumulative", False)),
+    } for e in st.session_state.expenses])
+
+    if exp_df.empty:
+        exp_df = pd.DataFrame(columns=["Name", "Monthly ₹", "Inflation %", "Start Year", "End Year", "Cumulative"])
+
+    edited_exp = st.data_editor(
+        exp_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        key=f"exp_editor",
+        column_config={
+            "Name":        st.column_config.TextColumn("Name", width="large"),
+            "Monthly ₹":   st.column_config.NumberColumn("Monthly ₹", format="%d", min_value=0),
+            "Inflation %": st.column_config.NumberColumn("Inflation %", format="%.1f", min_value=0.0, max_value=30.0, step=0.5),
+            "Start Year":  st.column_config.NumberColumn("Start Year", format="%d", min_value=2000, max_value=2100, step=1),
+            "End Year":    st.column_config.NumberColumn("End Year", format="%d", min_value=2000, max_value=2100, step=1),
+            "Cumulative":  st.column_config.CheckboxColumn("Cumulative"),
+        }
+    )
+
+    new_exp_state = []
+    for _, r in edited_exp.iterrows():
+        name = str(r.get("Name", "") or "").strip()
+        if not name and (r.get("Monthly ₹", 0) or 0) == 0: continue
+        new_exp_state.append({
+            "name":       name,
+            "monthly":    int(r.get("Monthly ₹", 0) or 0),
+            "inflation":  float(r.get("Inflation %", 6.0) or 6.0),
+            "start_year": int(r.get("Start Year", THIS_YEAR) or THIS_YEAR),
+            "end_year":   int(r.get("End Year", THIS_YEAR + 30) or THIS_YEAR + 30),
+            "cumulative": bool(r.get("Cumulative", False)),
         })
-    if st.button("➕ Add Expense", key=f"v{_v}_add_exp"):
-        st.session_state.expenses.append({
-            "name": "", "monthly": 0, "inflation": 6.0,
-            "start_year": THIS_YEAR, "end_year": THIS_YEAR + 30,
-        }); st.rerun()
+    if new_exp_state != st.session_state.expenses:
+        st.session_state.expenses = new_exp_state
+        _asset_value_at_year_cached.clear(); _compound_cached.clear()
 
     st.divider()
     # Projection horizon as calendar years
@@ -1307,85 +1321,63 @@ with tab_goals:
                 with col_a:
                     if st.button("Replace all goals", key=f"v{_v}_goal_replace"):
                         st.session_state.goals = new_goals
-                        st.session_state.data_version += 1; st.rerun()
+                        _asset_value_at_year_cached.clear(); _compound_cached.clear(); _goal_occurrences_cached.clear()
+                        st.rerun()
                 with col_b:
                     if st.button("Append to existing", key=f"v{_v}_goal_append"):
                         st.session_state.goals.extend(new_goals)
-                        st.session_state.data_version += 1; st.rerun()
+                        _asset_value_at_year_cached.clear(); _compound_cached.clear(); _goal_occurrences_cached.clear()
+                        st.rerun()
 
-    # Column headers
-    if st.session_state.goals:
-        hc = st.columns([2.5, 1.8, 1.2, 1.2, 1.2, 1.5, 1.2, 0.6])
-        for h, lbl in zip(hc, ["Goal Name", "Cost Today ₹", "Inflation %",
-                                "Start Year", "End Year", "Frequency (yrs)", "Cumulative", ""]):
-            h.caption(lbl)
+    # Fast batch editor for goals
+    goals_df = pd.DataFrame([{
+        "Goal Name":       g.get("name", ""),
+        "Cost Today ₹":    int(g.get("current_cost", 0) or 0),
+        "Inflation %":     float(g.get("inflation", 6.0) or 6.0),
+        "Start Year":      int(g.get("start_year", THIS_YEAR + 5) or THIS_YEAR + 5),
+        "End Year":        int(g.get("end_year", g.get("start_year", THIS_YEAR + 5)) or THIS_YEAR + 5),
+        "Frequency (yrs)": int(g.get("frequency", 0) or 0),
+        "Cumulative":      bool(g.get("cumulative", False)),
+    } for g in st.session_state.goals])
 
-    for i, g in enumerate(st.session_state.goals):
-        cols = st.columns([2.5, 1.8, 1.2, 1.2, 1.2, 1.5, 1.2, 0.6])
-        with cols[0]:
-            nn = st.text_input("Name", value=g["name"], key=f"v{_v}_goal_name_{i}",
-                label_visibility="collapsed", placeholder="e.g. School Fees")
-        with cols[1]:
-            nc = currency_input("Cost", g["current_cost"], key=f"v{_v}_goal_cost_{i}",
-                label_visibility="collapsed")
-        with cols[2]:
-            ni = st.number_input("Inf%", value=float(g.get("inflation", 6) or 6),
-                min_value=0.0, max_value=30.0, step=0.5,
-                key=f"v{_v}_goal_inf_{i}", label_visibility="collapsed")
-        with cols[3]:
-            # Fast number input instead of 101-item selectbox
-            raw_start = int(g.get("start_year", THIS_YEAR) or THIS_YEAR)
-            if raw_start <= 1000: raw_start = THIS_YEAR + raw_start
-            raw_start = max(2000, min(raw_start, 2100))
-            ns_cal = st.number_input("Start", value=raw_start,
-                min_value=2000, max_value=2100, step=1,
-                key=f"v{_v}_goal_start_{i}", label_visibility="collapsed")
-        with cols[4]:
-            raw_end = int(g.get("end_year", ns_cal) or ns_cal)
-            if raw_end <= 1000: raw_end = THIS_YEAR + raw_end
-            raw_end = max(ns_cal, min(raw_end, 2100))
-            ne_cal = st.number_input("End", value=raw_end,
-                min_value=ns_cal, max_value=2100, step=1,
-                key=f"v{_v}_goal_end_{i}", label_visibility="collapsed")
-            if ne_cal < ns_cal: ne_cal = ns_cal
-        with cols[5]:
-            nf = st.number_input("Freq", value=int(g.get("frequency", 0) or 0),
-                min_value=0, max_value=50,
-                key=f"v{_v}_goal_freq_{i}", label_visibility="collapsed",
-                help="0 = one-time, 1 = annual, 2 = every 2 years, etc.")
-        with cols[6]:
-            ncu = st.checkbox("Cum", value=g.get("cumulative", False),
-                key=f"v{_v}_goal_cum_{i}", label_visibility="collapsed")
-        with cols[7]:
-            if st.button("🗑️", key=f"v{_v}_del_goal_{i}"):
-                st.session_state.goals.pop(i); st.rerun()
+    if goals_df.empty:
+        goals_df = pd.DataFrame(columns=["Goal Name", "Cost Today ₹", "Inflation %", "Start Year", "End Year", "Frequency (yrs)", "Cumulative"])
 
-        # Build a preview using the calendar-year stored values (helpers will convert)
-        g_preview = {**g, "start_year": ns_cal, "end_year": ne_cal,
-                     "frequency": nf, "inflation": ni, "current_cost": nc}
-        occs = goal_occurrences(g_preview)
-        if nf > 0 and len(occs) > 0:
-            # Show calendar years in preview
-            occ_preview = ", ".join(
-                f"{THIS_YEAR + yr}: {fmt(c)}" for yr, c in occs[:4])
-            if len(occs) > 4: occ_preview += f" ... (+{len(occs)-4} more)"
-            total = sum(c for _, c in occs)
-            st.caption(f"↳ {len(occs)} payments — {occ_preview} · Total: **{fmt(total)}**")
-        elif len(occs) > 0:
-            cal_yr = THIS_YEAR + occs[0][0]
-            st.caption(f"↳ One-time in {cal_yr}: **{fmt(occs[0][1])}**")
+    edited_goals = st.data_editor(
+        goals_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        key=f"goals_editor",
+        column_config={
+            "Goal Name":       st.column_config.TextColumn("Goal Name", width="large"),
+            "Cost Today ₹":    st.column_config.NumberColumn("Cost Today ₹", format="%d", min_value=0),
+            "Inflation %":     st.column_config.NumberColumn("Inflation %", format="%.1f", min_value=0.0, max_value=30.0, step=0.5),
+            "Start Year":      st.column_config.NumberColumn("Start Year", format="%d", min_value=2000, max_value=2100, step=1),
+            "End Year":        st.column_config.NumberColumn("End Year", format="%d", min_value=2000, max_value=2100, step=1),
+            "Frequency (yrs)": st.column_config.NumberColumn("Frequency (yrs)", format="%d", min_value=0, max_value=50, step=1, help="0=one-time, 1=annual, 2=every 2 years"),
+            "Cumulative":      st.column_config.CheckboxColumn("Cumulative", help="Sum all occurrences into one total"),
+        }
+    )
 
-        st.session_state.goals[i].update({
-            "name": nn, "current_cost": nc, "inflation": ni,
-            "start_year": ns_cal, "end_year": ne_cal, "frequency": nf, "cumulative": ncu,
+    new_goals_state = []
+    for _, r in edited_goals.iterrows():
+        name = str(r.get("Goal Name", "") or "").strip()
+        if not name and (r.get("Cost Today ₹", 0) or 0) == 0: continue
+        sy = int(r.get("Start Year", THIS_YEAR + 5) or THIS_YEAR + 5)
+        ey = int(r.get("End Year", sy) or sy)
+        if ey < sy: ey = sy
+        new_goals_state.append({
+            "name":         name,
+            "current_cost": int(r.get("Cost Today ₹", 0) or 0),
+            "inflation":    float(r.get("Inflation %", 6.0) or 6.0),
+            "start_year":   sy,
+            "end_year":     ey,
+            "frequency":    int(r.get("Frequency (yrs)", 0) or 0),
+            "cumulative":   bool(r.get("Cumulative", False)),
         })
-
-    if st.button("➕ Add Goal", key=f"v{_v}_add_goal"):
-        st.session_state.goals.append({
-            "name": "", "current_cost": 0, "inflation": 6.0,
-            "start_year": THIS_YEAR + 5, "end_year": THIS_YEAR + 5,
-            "frequency": 0, "cumulative": False,
-        }); st.rerun()
+    if new_goals_state != st.session_state.goals:
+        st.session_state.goals = new_goals_state
+        _asset_value_at_year_cached.clear(); _compound_cached.clear(); _goal_occurrences_cached.clear()
 
     if st.session_state.goals:
         st.markdown("### Projected Goal Costs")
@@ -1451,85 +1443,92 @@ with tab_assets:
                                "Maturity ₹","Maturity Date","Tag Goals","SWP ₹/mo","SWP Start Yr",""]):
             h.caption(lbl)
 
-    for i, a in enumerate(st.session_state.assets):
-        cols = st.columns([2,1.2,1.2,1.4,1.4,1.4,1.2,1.8,1.2,1.2,0.5])
+    # ── Fast batch editor for all assets ──
+    assets_df = pd.DataFrame([{
+        "Asset Name":       a.get("name", ""),
+        "Class":            a.get("asset_class", "Equity") if a.get("asset_class") in ASSET_CLASSES else "Equity",
+        "Purchase Date":    a.get("purchase_date", "") or "",
+        "Invested ₹":       int(a.get("invested", 0) or 0),
+        "Current Value ₹":  int(a.get("value", 0) or 0),
+        "Maturity ₹":       int(a.get("maturity_amt", 0) or 0),
+        "Maturity Date":    a.get("maturity_date", "") or "",
+        "CAGR %":           float(a.get("cagr", 0.0) or 0.0),
+        "Tag Goals":        ", ".join(a.get("tagged_goals") or []),
+        "SWP ₹/mo":         int(a.get("swp_monthly", 0) or 0),
+        "SWP Start Yr":     int(a.get("swp_start_year", 0) or 0),
+    } for a in st.session_state.assets])
 
-        with cols[0]:
-            nn = st.text_input("Name", value=a["name"], key=f"v{_v}_asset_name_{i}",
-                label_visibility="collapsed", placeholder="e.g. HDFC FD")
-        with cols[1]:
-            nc = st.selectbox("Class", ASSET_CLASSES,
-                index=ASSET_CLASSES.index(a["asset_class"]) if a["asset_class"] in ASSET_CLASSES else 0,
-                key=f"v{_v}_asset_cls_{i}", label_visibility="collapsed")
-        with cols[2]:
-            pd_val = a.get("purchase_date","") or ""
-            npd = st.text_input("Purchase Date", value=pd_val, key=f"v{_v}_asset_pd_{i}",
-                label_visibility="collapsed", placeholder="DD/MM/YYYY")
-        with cols[3]:
-            ninv = currency_input("Invested", a.get("invested",0) or 0,
-                key=f"v{_v}_asset_inv_{i}", label_visibility="collapsed")
-        with cols[4]:
-            nv = currency_input("Current ₹", a["value"], key=f"v{_v}_asset_val_{i}",
-                label_visibility="collapsed")
-        with cols[5]:
-            nmat = currency_input("Maturity ₹", a.get("maturity_amt",0) or 0,
-                key=f"v{_v}_asset_mat_{i}", label_visibility="collapsed")
-        with cols[6]:
-            md_val = a.get("maturity_date","") or ""
-            nmd = st.text_input("Maturity Date", value=md_val, key=f"v{_v}_asset_md_{i}",
-                label_visibility="collapsed", placeholder="DD/MM/YYYY")
-        with cols[7]:
-            current_tags = [t for t in (a.get("tagged_goals") or []) if t in gnames]
-            nt = st.multiselect("Goals", options=gnames, default=current_tags,
-                key=f"v{_v}_asset_tags_{i}", label_visibility="collapsed", placeholder="Tag goals…")
-        with cols[8]:
-            ns = currency_input("SWP", a.get("swp_monthly",0) or 0,
-                key=f"v{_v}_asset_swp_{i}", label_visibility="collapsed")
-        with cols[9]:
-            nsy = st.number_input("SWP Yr", value=int(a.get("swp_start_year",0) or 0),
-                min_value=0, max_value=100, key=f"v{_v}_asset_swpyr_{i}", label_visibility="collapsed")
-        with cols[10]:
-            if st.button("🗑️", key=f"v{_v}_del_asset_{i}"): st.session_state.assets.pop(i); st.rerun()
+    if assets_df.empty:
+        assets_df = pd.DataFrame(columns=[
+            "Asset Name", "Class", "Purchase Date", "Invested ₹", "Current Value ₹",
+            "Maturity ₹", "Maturity Date", "CAGR %", "Tag Goals", "SWP ₹/mo", "SWP Start Yr"
+        ])
 
-        # Auto-calc CAGR from maturity info if available; else keep manual entry
-        if nmat > 0 and ninv > 0 and npd and nmd:
-            auto_cagr = round(calc_asset_cagr(ninv, nmat, npd, nmd), 2)
-        elif nmat > 0 and ninv > 0 and nmd:
-            # Use today as purchase date
-            auto_cagr = round(calc_asset_cagr(ninv, nmat, str(TODAY), nmd), 2)
+    edited_assets = st.data_editor(
+        assets_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        key="assets_editor",
+        height=min(400 + len(assets_df) * 8, 700),
+        column_config={
+            "Asset Name":      st.column_config.TextColumn("Asset Name", width="medium"),
+            "Class":           st.column_config.SelectboxColumn("Class", options=ASSET_CLASSES, required=True),
+            "Purchase Date":   st.column_config.TextColumn("Purchase Date", help="DD/MM/YYYY"),
+            "Invested ₹":      st.column_config.NumberColumn("Invested ₹", format="%d", min_value=0),
+            "Current Value ₹": st.column_config.NumberColumn("Current Value ₹", format="%d", min_value=0),
+            "Maturity ₹":      st.column_config.NumberColumn("Maturity ₹", format="%d", min_value=0),
+            "Maturity Date":   st.column_config.TextColumn("Maturity Date", help="DD/MM/YYYY"),
+            "CAGR %":          st.column_config.NumberColumn("CAGR %", format="%.2f", min_value=0.0, max_value=50.0, step=0.5, help="Auto-calculated if maturity info provided"),
+            "Tag Goals":       st.column_config.TextColumn("Tag Goals", help="Comma-separated goal names"),
+            "SWP ₹/mo":        st.column_config.NumberColumn("SWP ₹/mo", format="%d", min_value=0),
+            "SWP Start Yr":    st.column_config.NumberColumn("SWP Start Yr", format="%d", min_value=0, max_value=100),
+        }
+    )
+
+    # Sync back to session state
+    new_assets_state = []
+    for _, r in edited_assets.iterrows():
+        name = str(r.get("Asset Name", "") or "").strip()
+        val  = int(r.get("Current Value ₹", 0) or 0)
+        if not name and val == 0: continue
+
+        # Auto-compute CAGR from maturity if provided
+        inv  = int(r.get("Invested ₹", 0) or 0)
+        mat  = int(r.get("Maturity ₹", 0) or 0)
+        pd_  = str(r.get("Purchase Date", "") or "").strip()
+        md_  = str(r.get("Maturity Date", "") or "").strip()
+        manual_cagr = float(r.get("CAGR %", 0.0) or 0.0)
+
+        if mat > 0 and inv > 0 and md_:
+            auto = round(calc_asset_cagr(inv, mat, pd_ or str(TODAY), md_), 2)
+            cagr = auto if auto > 0 else manual_cagr
         else:
-            auto_cagr = a.get("cagr", 0.0) or 0.0
+            cagr = manual_cagr
 
-        # Show computed CAGR and post-tax maturity
-        info_parts = []
-        if auto_cagr > 0:
-            info_parts.append(f"CAGR: **{auto_cagr:.2f}%**")
-        if nmat > 0 and ninv > 0:
-            inv_for_tax = ninv if ninv > 0 else a.get("invested", 0) or 0
-            net_mat, tax_amt = asset_net_maturity(inv_for_tax, nmat, nc)
-            tax_rate_pct = asset_tax_rate(nc) * 100
-            info_parts.append(f"Tax ({tax_rate_pct:.0f}% on gains): {fmt(tax_amt)} · **Net Maturity: {fmt(net_mat)}**")
-        if info_parts:
-            st.caption("  ↳ " + "  ·  ".join(info_parts))
+        # Parse tagged goals
+        tags_raw = str(r.get("Tag Goals", "") or "").strip()
+        tags = [t.strip() for t in tags_raw.split(",") if t.strip() and t.strip() in gnames]
 
-        if ns > 0:
-            ai = avg_inflation()
-            val_with_swp = asset_value_at_year({**a,"swp_monthly":ns,"swp_start_year":nsy,"cagr":auto_cagr,"value":nv}, nsy+10, ai)
-            val_no_swp   = compound(nv, auto_cagr, nsy+10)
-            st.caption(f"  ↳ SWP {fmt(ns)}/mo from Yr {nsy} → value at Yr {nsy+10}: {fmt(val_with_swp)} (vs {fmt(val_no_swp)} without SWP)")
+        cls = r.get("Class", "Equity")
+        if cls not in ASSET_CLASSES: cls = "Equity"
 
-        st.session_state.assets[i].update({
-            "name":nn,"asset_class":nc,"purchase_date":npd,"invested":ninv,
-            "value":nv,"maturity_amt":nmat,"maturity_date":nmd,
-            "cagr":auto_cagr,"tagged_goals":nt,"swp_monthly":ns,"swp_start_year":nsy,
+        new_assets_state.append({
+            "name":           name,
+            "asset_class":    cls,
+            "purchase_date":  pd_,
+            "invested":       inv,
+            "value":          val,
+            "maturity_amt":   mat,
+            "maturity_date":  md_,
+            "cagr":           cagr,
+            "tagged_goals":   tags,
+            "swp_monthly":    int(r.get("SWP ₹/mo", 0) or 0),
+            "swp_start_year": int(r.get("SWP Start Yr", 0) or 0),
         })
 
-    if st.button("➕ Add Asset", key=f"v{_v}_add_asset"):
-        st.session_state.assets.append({
-            "name":"","asset_class":"Equity","purchase_date":"","invested":0,
-            "value":0,"maturity_amt":0,"maturity_date":"","cagr":0.0,
-            "tagged_goals":[],"swp_monthly":0,"swp_start_year":0,
-        }); st.rerun()
+    if new_assets_state != st.session_state.assets:
+        st.session_state.assets = new_assets_state
+        _asset_value_at_year_cached.clear(); _compound_cached.clear()
 
     if st.session_state.assets:
         st.markdown("### Asset Summary Table")
