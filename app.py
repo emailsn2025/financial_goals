@@ -5,6 +5,13 @@ import pandas as pd
 from datetime import date, datetime
 import base64
 import os
+import io
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib import colors
+from reportlab.lib.units import cm
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+from reportlab.lib.enums import TA_LEFT
 
 st.set_page_config(page_title="Net Worth & Goal Planner", page_icon="📊", layout="wide")
 
@@ -156,6 +163,8 @@ for key, default in [
     ("income", []), ("expenses", []), ("goals", []), ("assets", []),
     ("projection_years", 30), ("data_version", 0),
     ("ret_opening_corpus", 0), ("ret_goal_name", ""),
+    ("ret_annual_return", 8.0), ("ret_tax_class", "Equity"),
+    ("ret_custom_tax", 0.0), ("ret_q_withdrawal", 0), ("ret_w_inflation", 6.0),
     ("proj_start_year", THIS_YEAR), ("proj_end_year", THIS_YEAR + 30),
 ]:
     if key not in st.session_state:
@@ -745,8 +754,248 @@ def retirement_simulation(opening_corpus, annual_return_pct, asset_class,
     return rows, total_withdrawn
 
 # ══════════════════════════════════════════════════════
-# LAYOUT
+# PDF EXPORT — all tabs onto one document
 # ══════════════════════════════════════════════════════
+
+def _pdf_table(headers, rows, col_widths=None, font_size=7):
+    data = [headers] + rows
+    t = Table(data, colWidths=col_widths, repeatRows=1)
+    t.setStyle(TableStyle([
+        ('BACKGROUND',   (0,0), (-1,0), colors.HexColor('#1e293b')),
+        ('TEXTCOLOR',    (0,0), (-1,0), colors.white),
+        ('FONTSIZE',     (0,0), (-1,-1), font_size),
+        ('FONTNAME',     (0,0), (-1,0), 'Helvetica-Bold'),
+        ('GRID',         (0,0), (-1,-1), 0.4, colors.HexColor('#cbd5e1')),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f1f5f9')]),
+        ('VALIGN',       (0,0), (-1,-1), 'MIDDLE'),
+        ('LEFTPADDING',  (0,0), (-1,-1), 4),
+        ('RIGHTPADDING', (0,0), (-1,-1), 4),
+        ('TOPPADDING',   (0,0), (-1,-1), 3),
+        ('BOTTOMPADDING',(0,0), (-1,-1), 3),
+    ]))
+    return t
+
+def generate_full_pdf_report():
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(A4),
+        leftMargin=1.2*cm, rightMargin=1.2*cm, topMargin=1.2*cm, bottomMargin=1.2*cm,
+        title="Net Worth & Goal Planner Report",
+    )
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('T', parent=styles['Title'], fontSize=18,
+                                  textColor=colors.HexColor('#1e293b'))
+    heading_style = ParagraphStyle('H', parent=styles['Heading2'], fontSize=13,
+                                    textColor=colors.HexColor('#2563eb'), spaceBefore=10, spaceAfter=5)
+    sub_style = ParagraphStyle('S', parent=styles['Heading3'], fontSize=10,
+                                textColor=colors.HexColor('#334155'), spaceBefore=6, spaceAfter=3)
+    normal_style = ParagraphStyle('N', parent=styles['Normal'], fontSize=9, leading=13)
+    caption_style = ParagraphStyle('C', parent=styles['Normal'], fontSize=7,
+                                    textColor=colors.HexColor('#64748b'))
+
+    story = []
+
+    # ── Cover ──
+    story.append(Paragraph("Net Worth &amp; Goal Planner — Full Report", title_style))
+    story.append(Paragraph(f"Generated: {date.today().strftime('%d %b %Y')}", caption_style))
+    story.append(Spacer(1, 14))
+
+    # ── DASHBOARD ──
+    story.append(Paragraph("Dashboard", heading_style))
+    story.append(Paragraph(
+        f"<b>Total Net Worth:</b> {fmt(total_net_worth())} &nbsp;&nbsp; "
+        f"<b>Monthly Income:</b> {fmt(total_monthly_income())} &nbsp;&nbsp; "
+        f"<b>Monthly Expenses:</b> {fmt(total_monthly_expense())} &nbsp;&nbsp; "
+        f"<b>Monthly Surplus:</b> {fmt(monthly_surplus())}", normal_style))
+    story.append(Paragraph(
+        f"<b>Weighted CAGR:</b> {weighted_cagr():.1f}% &nbsp;&nbsp; "
+        f"<b>Risk Profile:</b> {risk_profile()}", normal_style))
+    story.append(Spacer(1, 8))
+
+    if st.session_state.goals:
+        story.append(Paragraph("Goal Summary", sub_style))
+        alloc_map = {g["name"]: g for g in smart_allocation()}
+        ai        = avg_inflation()
+        tnw       = total_net_worth()
+        eq_pct    = sum(a["value"] for a in st.session_state.assets if a["asset_class"]=="Equity") / tnw * 100 if tnw > 0 else 0
+        wcagr_pct = weighted_cagr()
+        wcagr     = wcagr_pct / 100
+        projs     = goal_projections()
+
+        remaining, prev_start, last_yr = None, 0, 0
+        today_value_by_goal = {}
+        for g in projs:
+            yr    = goal_start_year(g)
+            gname = g.get("name","") or "(unnamed)"
+            cost  = alloc_map.get(gname, {}).get("display_cost",
+                    goal_value_at_start(g, wcagr_pct) if goal_uses_cumulative(g) else g.get("inflated_cost", 0))
+            if remaining is None:
+                pool = sum(asset_value_at_year(a, yr, ai) for a in st.session_state.assets)
+            else:
+                gap = yr - prev_start
+                pool = remaining * compound(1, wcagr_pct, gap) if gap > 0 and wcagr_pct > 0 else remaining
+            allocated_future = min(pool, cost)
+            allocated_today  = allocated_future / ((1+wcagr)**yr) if wcagr > 0 and yr > 0 else allocated_future
+            npv_of_cost      = goal_npv(g, wcagr_pct)
+            today_value_by_goal[gname] = (cost, allocated_future, allocated_today, npv_of_cost)
+            remaining, prev_start, last_yr = max(pool - cost, 0), yr, yr
+
+        headers = ["Goal","Start","End","Cumulative Cost","Target Cost","NPV","Alloc. (Today's ₹)","% Met","Status"]
+        rows = []
+        tot_cum = tot_target = tot_npv = tot_alloc_today = 0.0
+        for g in projs:
+            name  = g["name"] or "(unnamed)"
+            alloc = alloc_map.get(name, {})
+            pct   = alloc.get("pct", 0)
+            cost, af, at, npv = today_value_by_goal.get(name, (0,0,0,0))
+            start_cal = g["start_year"] if g["start_year"]>1000 else rel_to_cal(goal_start_year(g))
+            end_cal   = g["end_year"]   if g["end_year"]>1000   else rel_to_cal(goal_end_year(g))
+            freq      = goal_frequency(g)
+            rows.append([
+                name, str(start_cal), str(end_cal) if freq>0 or end_cal!=start_cal else "—",
+                fmt(g["cumulative_cost"]), fmt(cost), fmt(npv), fmt(at),
+                f"{pct}%", alloc.get("status","—"),
+            ])
+            tot_cum += g["cumulative_cost"]; tot_target += cost; tot_npv += npv; tot_alloc_today += at
+        rows.append(["TOTAL","","", fmt(tot_cum), fmt(tot_target), fmt(tot_npv), fmt(tot_alloc_today), "", ""])
+        story.append(_pdf_table(headers, rows))
+        story.append(Spacer(1, 10))
+
+    recs = get_recommendations()
+    if recs:
+        story.append(Paragraph("Recommendations", sub_style))
+        for icon, rtitle, text in recs:
+            story.append(Paragraph(f"• <b>{rtitle}</b> — {text}", normal_style))
+    story.append(PageBreak())
+
+    # ── INCOME & EXPENSES ──
+    story.append(Paragraph("Income &amp; Expenses", heading_style))
+    if st.session_state.income:
+        story.append(Paragraph("Monthly Income Sources", sub_style))
+        headers = ["Source","Monthly ₹","Growth %/yr","Start Year","End Year"]
+        rows = [[i["name"] or "—", fmt_full(i["monthly"]), f'{i.get("growth",5.0)}%',
+                 str(i.get("start_year", THIS_YEAR)), str(i.get("end_year", THIS_YEAR+30))]
+                for i in st.session_state.income]
+        story.append(_pdf_table(headers, rows))
+        story.append(Spacer(1, 8))
+
+    if st.session_state.expenses:
+        story.append(Paragraph("Monthly Expenses", sub_style))
+        headers = ["Name","Monthly ₹","Inflation %","Start Year","End Year","Cumulative"]
+        rows = [[e["name"] or "—", fmt_full(e["monthly"]), f'{e["inflation"]}%',
+                 str(e.get("start_year", THIS_YEAR)), str(e.get("end_year", THIS_YEAR+30)),
+                 "Yes" if e.get("cumulative") else "No"]
+                for e in st.session_state.expenses]
+        story.append(_pdf_table(headers, rows))
+    story.append(PageBreak())
+
+    # ── GOALS ──
+    story.append(Paragraph("Financial Goals", heading_style))
+    if st.session_state.goals:
+        proj = goal_projections()
+        headers = ["Goal","Cost Today","Inflation %","Start","End","Frequency","Occurrences","First Payment","Total (Nominal)"]
+        rows = []
+        for g in proj:
+            freq = goal_frequency(g)
+            freq_str = f"Every {freq} yr(s)" if freq>0 else "One-time"
+            start_cal = g["start_year"] if g["start_year"]>1000 else rel_to_cal(g["start_year"])
+            end_cal   = g["end_year"]   if g["end_year"]>1000   else rel_to_cal(g["end_year"])
+            rows.append([
+                g["name"] or "—", fmt_full(g["current_cost"]), f'{g["inflation"]}%',
+                str(start_cal), str(end_cal), freq_str, str(len(g["occurrences"])),
+                fmt(g["inflated_cost"]), fmt(g["cumulative_cost"]),
+            ])
+        story.append(_pdf_table(headers, rows))
+    story.append(PageBreak())
+
+    # ── ASSETS ──
+    story.append(Paragraph("Asset Portfolio", heading_style))
+    story.append(Paragraph(
+        f"<b>Total:</b> {fmt_full(total_net_worth())} &nbsp;&nbsp; "
+        f"<b>Weighted CAGR:</b> {weighted_cagr():.1f}%", normal_style))
+    story.append(Spacer(1, 6))
+    if st.session_state.assets:
+        ai = avg_inflation()
+        headers = ["Asset","Class","Current Value","CAGR","Tagged Goals","SWP","5 Yrs","10 Yrs","20 Yrs"]
+        rows = []
+        for a in st.session_state.assets:
+            tags = ", ".join(a.get("tagged_goals") or []) or "—"
+            swp  = f'{fmt(a.get("swp_monthly",0) or 0)}/mo Yr{a.get("swp_start_year",0) or 0}+' \
+                   if (a.get("swp_monthly") or 0) > 0 else "—"
+            rows.append([
+                a["name"] or "—", a["asset_class"], fmt_full(a["value"]), f'{a["cagr"]:.2f}%',
+                tags, swp,
+                fmt(asset_value_at_year(a,5,ai)), fmt(asset_value_at_year(a,10,ai)), fmt(asset_value_at_year(a,20,ai)),
+            ])
+        rows.append(["TOTAL","", fmt_full(total_net_worth()), f"{weighted_cagr():.1f}%", "", "",
+                      fmt(portfolio_at_year(5)), fmt(portfolio_at_year(10)), fmt(portfolio_at_year(20))])
+        story.append(_pdf_table(headers, rows, font_size=6.5))
+    story.append(PageBreak())
+
+    # ── RETIREMENT ──
+    story.append(Paragraph("Retirement Corpus Drawdown", heading_style))
+    ret_corpus = float(st.session_state.get("ret_opening_corpus", 0) or 0)
+    ret_goal   = st.session_state.get("ret_goal_name", "")
+    ret_qw     = float(st.session_state.get("ret_q_withdrawal", 0) or 0)
+    if ret_corpus > 0 and ret_qw > 0:
+        ret_return    = st.session_state.get("ret_annual_return", 8.0)
+        ret_tax_class = st.session_state.get("ret_tax_class", "Equity")
+        ret_custom_tax= st.session_state.get("ret_custom_tax", 0.0)
+        ret_winf      = st.session_state.get("ret_w_inflation", 6.0)
+        eff_tax = (ret_custom_tax/100) if ret_custom_tax > 0 else None
+
+        rows_sim, total_withdrawn = retirement_simulation(
+            ret_corpus, ret_return, ret_tax_class, ret_qw, ret_winf, eff_tax)
+        total_quarters = len(rows_sim)
+        total_years    = total_quarters / 4
+        total_tax_paid = sum(r["Tax Amount"] for r in rows_sim)
+        total_return   = sum(r["Gross Return"] for r in rows_sim)
+
+        story.append(Paragraph(
+            f"<b>Goal:</b> {ret_goal or '—'} &nbsp;&nbsp; "
+            f"<b>Opening Corpus:</b> {fmt(ret_corpus)} &nbsp;&nbsp; "
+            f"<b>Expected Return:</b> {ret_return:.1f}% &nbsp;&nbsp; "
+            f"<b>Tax Class:</b> {ret_tax_class}", normal_style))
+        story.append(Paragraph(
+            f"<b>Quarterly Withdrawal:</b> {fmt(ret_qw)} (inflating {ret_winf:.1f}%/yr) &nbsp;&nbsp; "
+            f"<b>Corpus Lasts:</b> {total_years:.1f} years ({total_quarters} quarters)", normal_style))
+        story.append(Paragraph(
+            f"<b>Total Withdrawn:</b> {fmt(total_withdrawn)} &nbsp;&nbsp; "
+            f"<b>Total Tax Paid:</b> {fmt(total_tax_paid)} &nbsp;&nbsp; "
+            f"<b>Total Returns Earned:</b> {fmt(total_return)}", normal_style))
+        story.append(Spacer(1, 8))
+
+        # Annual summary table (aggregated from quarters, keeps PDF compact)
+        annual = {}
+        for r in rows_sim:
+            yr = r["Quarter"].split(" ")[0]
+            if yr not in annual:
+                annual[yr] = {"Year": yr.replace("Y","Year "), "Opening": r["Opening Corpus"],
+                              "Withdrawal": 0, "Tax": 0, "Return": 0, "Closing": 0}
+            annual[yr]["Withdrawal"] += r["Withdrawal"]
+            annual[yr]["Tax"]        += r["Tax Amount"]
+            annual[yr]["Return"]     += r["Gross Return"]
+            annual[yr]["Closing"]     = r["Closing Corpus"]
+        headers = ["Year","Opening Corpus","Withdrawal","Tax Paid","Return Earned","Closing Corpus"]
+        ann_rows = [[a["Year"], fmt(a["Opening"]), fmt(a["Withdrawal"]), fmt(a["Tax"]),
+                     fmt(a["Return"]), fmt(a["Closing"])] for a in annual.values()]
+        story.append(Paragraph("Annual Summary", sub_style))
+        story.append(_pdf_table(headers, ann_rows))
+    elif ret_corpus > 0:
+        story.append(Paragraph(
+            f"<b>Goal:</b> {ret_goal or '—'} &nbsp;&nbsp; <b>Opening Corpus:</b> {fmt(ret_corpus)}",
+            normal_style))
+        story.append(Paragraph(
+            "Set a quarterly withdrawal amount in the Retirement tab to see the full drawdown simulation here.",
+            caption_style))
+    else:
+        story.append(Paragraph("No retirement corpus configured yet — visit the Retirement tab to set it up.", normal_style))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
 
 # ── Full-width header bar ──
 def get_logo_b64():
@@ -821,6 +1070,25 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
             for k in ["income","expenses","goals","assets"]: st.session_state[k] = []
             st.session_state.projection_years = 30
             st.session_state.data_version += 1; st.rerun()
+
+with st.expander("📄 Export All Tabs to PDF", expanded=False):
+    st.caption("Generates a single PDF covering Dashboard, Income & Expenses, Goals, Assets, and Retirement.")
+    if st.button("📄 Generate PDF Report", use_container_width=True, type="primary"):
+        with st.spinner("Building PDF..."):
+            try:
+                pdf_bytes = generate_full_pdf_report()
+                st.session_state["_pdf_ready"] = pdf_bytes
+                st.success("✓ Report ready — click below to download")
+            except Exception as e:
+                st.error(f"Could not generate PDF: {e}")
+    if st.session_state.get("_pdf_ready"):
+        st.download_button(
+            "⬇️ Download PDF Report",
+            data=st.session_state["_pdf_ready"],
+            file_name=f"financial_planner_report_{THIS_YEAR}.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
 
 st.markdown("""
 <div style="
@@ -1707,6 +1975,13 @@ with tab_retire:
 
         withdrawal_inflation = st.number_input("Withdrawal Inflation Rate %/yr",
             value=round(ai,1), min_value=0.0, max_value=20.0, step=0.5, key=f"v{_v}_ret_winf")
+
+        # Persist for PDF export and cross-tab reference
+        st.session_state.ret_annual_return = annual_return
+        st.session_state.ret_tax_class     = asset_class_for_tax
+        st.session_state.ret_custom_tax    = custom_tax
+        st.session_state.ret_q_withdrawal  = q_withdrawal
+        st.session_state.ret_w_inflation   = withdrawal_inflation
 
     with col_info:
         st.markdown("#### How This Works")
