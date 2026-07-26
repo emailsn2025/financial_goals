@@ -280,11 +280,33 @@ def goal_npv(g, wcagr_pct):
     r = wcagr_pct / 100
     return sum(cost / ((1 + r) ** yr) if yr > 0 else cost for yr, cost in occs)
 
+def goal_value_at_start(g, wcagr_pct):
+    """
+    Lump sum needed AT the goal's own start year to fund its ENTIRE future
+    cost stream, assuming that lump sum keeps growing at wcagr while being
+    drawn down each occurrence — i.e. the same principle the Retirement tab's
+    quarter-by-quarter simulation uses (money isn't just sitting still while
+    being spent, it keeps compounding).
+
+    This is the correct figure to compare against a portfolio pool that has
+    been projected forward to the goal's start year. Comparing that pool
+    against the raw NOMINAL cumulative cost (undiscounted sum of every future
+    payment) is a mismatch — it ignores that the pool keeps earning returns
+    throughout the whole payout window, not just up to the first payment.
+    """
+    occs  = g.get("occurrences") or goal_occurrences(g)
+    start = goal_start_year(g)
+    if wcagr_pct <= 0:
+        return sum(cost for _, cost in occs)
+    r = wcagr_pct / 100
+    return sum(cost / ((1 + r) ** (yr - start)) for yr, cost in occs)
+
 # ── Smart allocation: tagged assets first + retirement corpus as virtual asset ──
 def smart_allocation():
-    ai    = avg_inflation()
-    projs = goal_projections()
-    results = []
+    ai        = avg_inflation()
+    wcagr_pct = weighted_cagr()
+    projs     = goal_projections()
+    results   = []
 
     # Retirement corpus from retirement tab counts as a virtual tagged asset
     ret_corpus     = float(st.session_state.get("ret_opening_corpus", 0) or 0)
@@ -293,7 +315,10 @@ def smart_allocation():
     for g in projs:
         gname   = g["name"] or ""
         use_cum = goal_uses_cumulative(g)
-        cost    = g["cumulative_cost"] if use_cum else g["inflated_cost"]
+        # For recurring/cumulative goals, fund against the lump sum needed AT
+        # the goal's start year (accounting for continued growth during the
+        # payout window) — NOT the raw undiscounted nominal total.
+        cost    = goal_value_at_start(g, wcagr_pct) if use_cum else g["inflated_cost"]
         yr      = g["start_year"]   # project assets to when goal first hits
 
         tagged   = [a for a in st.session_state.assets if gname and gname in (a.get("tagged_goals") or [])]
@@ -914,6 +939,13 @@ with tab_dash:
     # ── Goal Summary Table ──
     if st.session_state.goals:
         st.markdown("### Goal Summary")
+        st.caption(
+            "For recurring goals, **Cumulative Cost** is the raw nominal sum of every future "
+            "payment. **Target Cost (Used)** — what funding is actually checked against — is "
+            "smaller: it's the lump sum needed at the goal's own start year, assuming that sum "
+            "keeps growing at your portfolio's CAGR while being drawn down (the same principle "
+            "the Retirement tab's drawdown simulation uses)."
+        )
         alloc_map = {g["name"]: g for g in smart_allocation()}
         ai        = avg_inflation()
         tnw       = total_net_worth()
@@ -933,7 +965,7 @@ with tab_dash:
             yr    = goal_start_year(g)
             gname = g.get("name", "") or "(unnamed)"
             cost  = alloc_map.get(gname, {}).get("display_cost",
-                    g.get("cumulative_cost") if goal_uses_cumulative(g) else g.get("inflated_cost", 0))
+                    goal_value_at_start(g, wcagr_pct) if goal_uses_cumulative(g) else g.get("inflated_cost", 0))
 
             if remaining is None:
                 pool = sum(asset_value_at_year(a, yr, ai) for a in st.session_state.assets)
