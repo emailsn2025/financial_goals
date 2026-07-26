@@ -214,6 +214,16 @@ def goal_frequency(g):
     """Recurrence interval in years. 0 or blank = one-time."""
     return max(int(g.get("frequency", 0) or 0), 0)
 
+def goal_uses_cumulative(g):
+    """
+    Whether this goal's FUNDING should be assessed against its full multi-year cost.
+    Recurring goals (frequency > 0) ALWAYS use cumulative cost for funding purposes —
+    a goal that recurs annually cannot be considered "funded" by covering just the
+    first payment. The manual "Cumulative" checkbox only matters for one-time goals,
+    where inflated_cost == cumulative_cost anyway, so it's a no-op there.
+    """
+    return goal_frequency(g) > 0 or bool(g.get("cumulative", False))
+
 @st.cache_data(max_entries=256)
 def _goal_occurrences_cached(base, inf, start, end, freq):
     """Pure cached goal occurrence calculator. End year is exclusive."""
@@ -267,7 +277,7 @@ def smart_allocation():
 
     for g in projs:
         gname   = g["name"] or ""
-        use_cum = g.get("cumulative", False)
+        use_cum = goal_uses_cumulative(g)
         cost    = g["cumulative_cost"] if use_cum else g["inflated_cost"]
         yr      = g["start_year"]   # project assets to when goal first hits
 
@@ -860,7 +870,7 @@ with tab_dash:
         col_info, col_bar = st.columns([1,2])
         with col_info:
             css = "badge-green" if g["pct"]>=100 else ("badge-amber" if g["pct"]>50 else "badge-red")
-            cost_label = "Cumulative cost" if g.get("cumulative") else "First occurrence cost"
+            cost_label = "Cumulative cost" if goal_uses_cumulative(g) else "First occurrence cost"
             freq = goal_frequency(g)
             freq_str = f" · every {freq}yr" if freq > 0 else " · one-time"
             yr_str = f"Yr {g['start_year']}–{g['end_year']}{freq_str}" if freq > 0 else f"Yr {g['start_year']}"
@@ -957,9 +967,8 @@ with tab_dash:
         # ── Data quality warnings (shown before surplus) ──
         zero_cagr_val = sum(a.get("value",0) for a in st.session_state.assets
                             if (a.get("cagr") or 0) == 0)
-        non_cum_recurring = [g for g in goal_projections()
-                             if goal_frequency(g) > 0 and not g.get("cumulative", False)]
-        if zero_cagr_val > 0 or non_cum_recurring:
+        recurring_goals = [g for g in goal_projections() if goal_frequency(g) > 0]
+        if zero_cagr_val > 0 or recurring_goals:
             with st.expander("⚠️ Data Quality Warnings — may affect surplus accuracy", expanded=True):
                 if zero_cagr_val > 0:
                     st.warning(
@@ -970,12 +979,13 @@ with tab_dash:
                         ", ".join(a.get("name","?") for a in st.session_state.assets
                                   if (a.get("cagr") or 0) == 0)[:200]
                     )
-                if non_cum_recurring:
-                    names = ", ".join(g.get("name","?") for g in non_cum_recurring)
-                    st.warning(
-                        f"**Recurring goals without Cumulative ticked: {names}.** "
-                        f"The app is only funding the FIRST payment of these goals, not the total "
-                        f"cost across all years. Tick Cumulative in the Goals tab for a realistic picture."
+                if recurring_goals:
+                    names = ", ".join(g.get("name","?") for g in recurring_goals)
+                    st.info(
+                        f"ℹ️ **Recurring goals are always funded against their full multi-year cost:** "
+                        f"{names}. Even if the Cumulative checkbox in the Goals tab isn't ticked, "
+                        f"the app treats a recurring commitment (e.g. school fees every year) as needing "
+                        f"the SUM of all its payments — not just the first one — before calling it funded."
                     )
 
         # TRUE surplus = FIFO remainder after all goals paid, discounted back to TODAY's value
@@ -991,7 +1001,7 @@ with tab_dash:
             yr = goal_start_year(g)
             gname = g.get("name", "") or "(unnamed)"
             cost = alloc_map.get(g.get("name",""), {}).get("display_cost",
-                   g.get("cumulative_cost") if g.get("cumulative") else g.get("inflated_cost", 0))
+                   g.get("cumulative_cost") if goal_uses_cumulative(g) else g.get("inflated_cost", 0))
             if remaining is None:
                 pool = sum(asset_value_at_year(a, yr, ai_now) for a in st.session_state.assets)
             else:
