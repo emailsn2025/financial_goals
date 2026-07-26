@@ -904,23 +904,54 @@ with tab_dash:
         tnw       = total_net_worth()
         prof      = risk_profile()
         eq_pct    = sum(a["value"] for a in st.session_state.assets if a["asset_class"]=="Equity") / tnw * 100 if tnw > 0 else 0
+        wcagr_pct = weighted_cagr()
+        wcagr     = wcagr_pct / 100
+
+        # ── Run the FIFO chain ONCE: gives allocated-in-today's-money and
+        #    lets us discount each goal's target cost back to today (NPV) ──
+        projs = goal_projections()
+        remaining = None
+        prev_start = 0
+        last_yr = 0
+        today_value_by_goal = {}   # name -> (cost, allocated_future, allocated_today, npv_of_cost)
+        for g in projs:
+            yr    = goal_start_year(g)
+            gname = g.get("name", "") or "(unnamed)"
+            cost  = alloc_map.get(gname, {}).get("display_cost",
+                    g.get("cumulative_cost") if goal_uses_cumulative(g) else g.get("inflated_cost", 0))
+
+            if remaining is None:
+                pool = sum(asset_value_at_year(a, yr, ai) for a in st.session_state.assets)
+            else:
+                gap  = yr - prev_start
+                pool = remaining * compound(1, wcagr_pct, gap) if gap > 0 and wcagr_pct > 0 else remaining
+
+            allocated_future = min(pool, cost)
+            allocated_today = allocated_future / ((1 + wcagr) ** yr) if wcagr > 0 and yr > 0 else allocated_future
+            npv_of_cost     = cost / ((1 + wcagr) ** yr) if wcagr > 0 and yr > 0 else cost
+
+            today_value_by_goal[gname] = (cost, allocated_future, allocated_today, npv_of_cost)
+
+            remaining  = max(pool - cost, 0)
+            prev_start = yr
+            last_yr    = yr
+
+        remaining_future = remaining if remaining is not None else 0
+        surplus_today = remaining_future / ((1 + wcagr) ** last_yr) if wcagr > 0 and last_yr > 0 else remaining_future
 
         summary_rows = []
-        for g in goal_projections():
+        for g in projs:
             name  = g["name"] or "(unnamed)"
             alloc = alloc_map.get(name, {})
             pct   = alloc.get("pct", 0)
-            cost  = alloc.get("display_cost", g["cumulative_cost"])
+            cost, allocated_future, allocated_today, npv_of_cost = today_value_by_goal.get(
+                name, (alloc.get("display_cost", g["cumulative_cost"]), 0, 0, 0))
             allocated = alloc.get("allocated", 0)
             gap   = max(cost - allocated, 0)
 
             # Additional annual contribution needed to close the gap
             years_left = max(goal_start_year(g), 1)
-            # FV of annual contribution at weighted CAGR to close gap
-            wcagr = weighted_cagr() / 100
             if wcagr > 0 and years_left > 0:
-                # How much to invest annually so it grows to `gap` in `years_left` years
-                # PMT = FV × r / ((1+r)^n − 1)
                 annual_contrib = gap * wcagr / ((1 + wcagr) ** years_left - 1) if ((1 + wcagr) ** years_left - 1) > 0 else gap / years_left
             else:
                 annual_contrib = gap / years_left if years_left > 0 else gap
@@ -945,16 +976,17 @@ with tab_dash:
             end_cal   = g["end_year"]   if g["end_year"]   > 1000 else rel_to_cal(goal_end_year(g))
             freq      = goal_frequency(g)
             summary_rows.append({
-                "Goal":                        name,
-                "Start":                       str(start_cal),
-                "End":                         str(end_cal) if freq > 0 or end_cal != start_cal else "—",
-                "Cumulative Cost":             fmt(g["cumulative_cost"]),
-                "Target Cost (Used)":          fmt(cost),
-                "Allocated":                   fmt(allocated),
-                "% Met":                       f"{pct}%",
-                "Status":                      alloc.get("status", "—"),
-                "Add'l Contribution / Year":   fmt(annual_contrib) if gap > 0 else "—",
-                "Recommendation":              rec,
+                "Goal":                              name,
+                "Start":                             str(start_cal),
+                "End":                               str(end_cal) if freq > 0 or end_cal != start_cal else "—",
+                "Cumulative Cost":                   fmt(g["cumulative_cost"]),
+                "Target Cost (Used)":                fmt(cost),
+                "Net Present Value":                 fmt(npv_of_cost),
+                "Allocated from Current Corpus":     fmt(allocated_today),
+                "% Met":                             f"{pct}%",
+                "Status":                            alloc.get("status", "—"),
+                "Current Add'l Contribution Required": fmt(annual_contrib) if gap > 0 else "—",
+                "Recommendation":                    rec,
             })
 
         st.dataframe(summary_rows, width="stretch", hide_index=True)
@@ -987,43 +1019,6 @@ with tab_dash:
                         f"the app treats a recurring commitment (e.g. school fees every year) as needing "
                         f"the SUM of all its payments — not just the first one — before calling it funded."
                     )
-
-        # TRUE surplus = FIFO remainder after all goals paid, discounted back to TODAY's value
-        # Also track each goal's allocated amount, expressed in today's money
-        ai_now = avg_inflation()
-        wcagr  = weighted_cagr()
-        projs  = goal_projections()
-        remaining = None
-        prev_start = 0
-        last_yr = 0
-        goal_today_alloc = []   # [(name, goal_year, allocated_future, allocated_today, pct)]
-        for g in projs:
-            yr = goal_start_year(g)
-            gname = g.get("name", "") or "(unnamed)"
-            cost = alloc_map.get(g.get("name",""), {}).get("display_cost",
-                   g.get("cumulative_cost") if goal_uses_cumulative(g) else g.get("inflated_cost", 0))
-            if remaining is None:
-                pool = sum(asset_value_at_year(a, yr, ai_now) for a in st.session_state.assets)
-            else:
-                gap  = yr - prev_start
-                pool = remaining * compound(1, wcagr, gap) if gap > 0 and wcagr > 0 else remaining
-
-            allocated_future = min(pool, cost)
-            # Discount this goal's allocation back to today's money
-            allocated_today = allocated_future / ((1 + wcagr/100) ** yr) if wcagr > 0 and yr > 0 else allocated_future
-            pct_of_nw = (allocated_today / total_net_worth() * 100) if total_net_worth() > 0 else 0
-            goal_today_alloc.append((gname, yr, allocated_future, allocated_today, pct_of_nw))
-
-            remaining  = max(pool - cost, 0)
-            prev_start = yr
-            last_yr    = yr
-
-        # Discount the remaining future value back to today's money
-        remaining_future = remaining if remaining is not None else 0
-        if wcagr > 0 and last_yr > 0:
-            surplus_today = remaining_future / ((1 + wcagr/100) ** last_yr)
-        else:
-            surplus_today = remaining_future
 
         st.markdown("---")
         if all_fully_funded and surplus_today > 0:
@@ -1071,95 +1066,10 @@ with tab_dash:
                 f'<div style="color:#fee2e2; font-size:14px;">'
                 f'Total funding gap across all goals: '
                 f'<strong style="color:#fff; font-size:17px;">{fmt(total_gap)}</strong>.<br/>'
-                f'See the Add\'l Contribution column above for per-goal top-up amounts.'
+                f'See the Current Add\'l Contribution Required column above for per-goal top-up amounts.'
                 f'</div></div>',
                 unsafe_allow_html=True,
             )
-
-        # ── How is today's ₹X allocated across goals? ──
-        if goal_today_alloc:
-            st.markdown("### 💰 Today's Net Worth — Allocated by Goal")
-            st.caption(
-                f"Shows how your current {fmt(total_net_worth())} net worth is earmarked across goals, "
-                f"expressed in today's money (discounted back from each goal's future funding amount "
-                f"at {weighted_cagr():.1f}% CAGR)."
-            )
-            today_rows = []
-            for gname, gyr, fut, tod, pct in goal_today_alloc:
-                today_rows.append({
-                    "Goal":                gname,
-                    "Goal Year":           str(rel_to_cal(gyr)),
-                    "Allocated (Future ₹)": fmt(fut),
-                    "Allocated (Today's ₹)": fmt(tod),
-                    "% of Net Worth Today": f"{pct:.1f}%",
-                })
-            today_rows.append({
-                "Goal":                 "→ Surplus (unallocated)",
-                "Goal Year":            "—",
-                "Allocated (Future ₹)": fmt(remaining_future),
-                "Allocated (Today's ₹)": fmt(surplus_today),
-                "% of Net Worth Today": f"{(surplus_today/total_net_worth()*100) if total_net_worth()>0 else 0:.1f}%",
-            })
-            st.dataframe(today_rows, width="stretch", hide_index=True)
-            reconciled = sum(tod for _,_,_,tod,_ in goal_today_alloc) + surplus_today
-            st.caption(
-                f"Reconciliation: sum of allocations + surplus = {fmt(reconciled)} "
-                f"(vs. Net Worth Today {fmt(total_net_worth())}). Small differences are due to "
-                f"each asset's own CAGR being used for the first goal, then blended CAGR thereafter."
-            )
-
-        # ── Asset → Goal Allocation Table ──
-        if st.session_state.assets and alloc_list:
-            st.markdown("### Asset → Goal Allocation")
-            st.caption("Shows which assets are tagged to which goals, their projected value at the goal year, and contribution.")
-            ai_now   = avg_inflation()
-            alloc_rows = []
-            for g in goal_projections():
-                gname    = g["name"] or "(unnamed)"
-                g_alloc  = alloc_map.get(gname, {})
-                yr       = goal_start_year(g)
-
-                # Tagged assets
-                tagged = [a for a in st.session_state.assets
-                          if gname and gname in (a.get("tagged_goals") or [])]
-                for a in tagged:
-                    proj_val = asset_value_at_year(a, yr, ai_now)
-                    alloc_rows.append({
-                        "Goal":          gname,
-                        "Goal Year":     str(g["start_year"] if g["start_year"] > 1000 else rel_to_cal(yr)),
-                        "Asset":         a["name"] or "(unnamed)",
-                        "Class":         a["asset_class"],
-                        "Today's Value": fmt_full(a["value"]),
-                        "Proj. Value":   fmt(proj_val),
-                        "Role":          "🏷️ Tagged",
-                    })
-
-                # Untagged contribution
-                unc = g_alloc.get("untagged_contrib", 0)
-                if unc > 0:
-                    alloc_rows.append({
-                        "Goal":          gname,
-                        "Goal Year":     str(g["start_year"] if g["start_year"] > 1000 else rel_to_cal(yr)),
-                        "Asset":         "(Untagged pool)",
-                        "Class":         "Mixed",
-                        "Today's Value": "—",
-                        "Proj. Value":   fmt(unc),
-                        "Role":          "🔄 Filler",
-                    })
-
-                if not tagged and unc == 0:
-                    alloc_rows.append({
-                        "Goal":          gname,
-                        "Goal Year":     str(g["start_year"] if g["start_year"] > 1000 else rel_to_cal(yr)),
-                        "Asset":         "(No assets allocated)",
-                        "Class":         "—",
-                        "Today's Value": "—",
-                        "Proj. Value":   "—",
-                        "Role":          "⚠️ Unallocated",
-                    })
-
-            if alloc_rows:
-                st.dataframe(alloc_rows, width="stretch", hide_index=True)
 
 # ══════════════════════════════════════════════════════
 # INCOME & EXPENSES
