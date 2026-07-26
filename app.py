@@ -871,42 +871,29 @@ with tab_dash:
         st.dataframe(summary_rows, width="stretch", hide_index=True)
 
         # ── Surplus / Shortfall Banner ──
+        # Surplus = Today's Net Worth − PV of all goal costs discounted to today
+        # PV of each goal cost = display_cost / (1 + weighted_cagr)^years_to_goal
+        # This answers: "of my money TODAY, how much is reserved vs free?"
         alloc_list       = list(alloc_map.values())
         all_fully_funded = len(alloc_list) > 0 and all(g.get("pct", 0) >= 100 for g in alloc_list)
-        total_cost_all   = sum(g.get("display_cost", 0) for g in alloc_list)
+        wcagr            = weighted_cagr() / 100
+        tnw_today        = total_net_worth()
+        ret_corpus_today = float(st.session_state.get("ret_opening_corpus", 0) or 0)
+        total_today      = tnw_today + ret_corpus_today
 
-        # Surplus = what's left in the untagged pool after all goals are satisfied.
-        # Re-run the untagged filler logic to find the remainder.
-        ai_now   = avg_inflation()
-        untagged = [a for a in st.session_state.assets if not (a.get("tagged_goals") or [])]
+        # PV of each goal cost: how much you need to set aside TODAY to meet it
+        total_pv_needed  = 0.0
+        for g in goal_projections():
+            yrs  = max(goal_start_year(g), 1)
+            cost = alloc_map.get(g["name"] or "", {}).get("display_cost", g["inflated_cost"])
+            pv   = cost / ((1 + wcagr) ** yrs) if wcagr > 0 else cost
+            total_pv_needed += pv
 
-        if all_fully_funded and alloc_list:
-            # For each goal, subtract what was taken from the untagged pool
-            untagged_used = sum(g.get("untagged_contrib", 0) for g in alloc_list)
-            # Project untagged pool to the last goal year to get its full value
-            max_goal_yr  = max(goal_start_year(g) for g in goal_projections())
-            untagged_val = sum(asset_value_at_year(a, max_goal_yr, ai_now) for a in untagged)
-            surplus_amt  = max(untagged_val - untagged_used, 0)
-
-            # Also add any tagged asset value that exceeded its goal's cost
-            for g in alloc_list:
-                tagged_for_goal = [a for a in st.session_state.assets
-                                   if g["name"] and g["name"] in (a.get("tagged_goals") or [])]
-                tagged_val = sum(asset_value_at_year(a, goal_start_year(g), ai_now)
-                                 for a in tagged_for_goal)
-                surplus_amt += max(tagged_val - g["display_cost"], 0)
-
-            ret_corpus_val = float(st.session_state.get("ret_opening_corpus", 0) or 0)
-            ret_goal_name  = st.session_state.get("ret_goal_name", "")
-            if ret_corpus_val > 0 and ret_goal_name:
-                ret_alloc = alloc_map.get(ret_goal_name, {})
-                surplus_amt += max(ret_corpus_val - ret_alloc.get("display_cost", 0), 0)
-        else:
-            surplus_amt  = 0
-            max_goal_yr  = 0
+        surplus_today = total_today - total_pv_needed
+        total_cost_all = sum(g.get("display_cost", 0) for g in alloc_list)
 
         st.markdown("---")
-        if all_fully_funded and surplus_amt > 0:
+        if all_fully_funded and surplus_today > 0:
             st.markdown(
                 f'<div style="background:linear-gradient(135deg,#059669,#047857); '
                 f'border-radius:10px; padding:18px 24px; margin-top:8px; '
@@ -914,26 +901,29 @@ with tab_dash:
                 f'<div style="color:#fff; font-size:20px; font-weight:700; margin-bottom:6px;">'
                 f'🎉 All Goals Fully Funded!</div>'
                 f'<div style="color:#d1fae5; font-size:14px; line-height:1.6;">'
-                f'Every goal is covered. Estimated surplus after meeting all goals: '
-                f'<strong style="color:#fff; font-size:17px;">{fmt(surplus_amt)}</strong>.<br/>'
+                f'Every goal is covered. In <b style="color:#fff">today\'s money</b>, '
+                f'you have a surplus of '
+                f'<strong style="color:#fff; font-size:17px;">{fmt(surplus_today)}</strong> '
+                f'after reserving for all goals (PV at {weighted_cagr():.1f}% CAGR).<br/>'
                 f'Consider deploying the surplus into additional equity, topping up your '
                 f'retirement corpus, or creating a legacy fund.'
                 f'</div></div>',
                 unsafe_allow_html=True,
             )
-            s1, s2, s3 = st.columns(3)
-            s1.metric("Total Goal Cost", fmt(total_cost_all))
-            s2.metric("Goals Count",     str(len(alloc_list)))
-            s3.metric("Est. Surplus",    fmt(surplus_amt))
+            s1, s2, s3, s4 = st.columns(4)
+            s1.metric("Net Worth Today",      fmt(tnw_today))
+            s2.metric("PV of All Goals",      fmt(total_pv_needed))
+            s3.metric("Today's Surplus",      fmt(surplus_today))
+            s4.metric("Goals Count",          str(len(alloc_list)))
 
-        elif all_fully_funded and surplus_amt <= 0:
+        elif all_fully_funded and surplus_today <= 0:
             st.markdown(
                 f'<div style="background:linear-gradient(135deg,#0369a1,#0c4a6e); '
                 f'border-radius:10px; padding:18px 24px; margin-top:8px;">'
                 f'<div style="color:#fff; font-size:20px; font-weight:700; margin-bottom:6px;">'
                 f'✅ All Goals Funded — Tight Fit</div>'
                 f'<div style="color:#bae6fd; font-size:14px;">'
-                f'All goals are met but with little headroom. '
+                f'All goals are met but with little headroom in today\'s money. '
                 f'Consider building a buffer against market volatility.'
                 f'</div></div>',
                 unsafe_allow_html=True,
@@ -953,6 +943,59 @@ with tab_dash:
                 f'</div></div>',
                 unsafe_allow_html=True,
             )
+
+        # ── Asset → Goal Allocation Table ──
+        if st.session_state.assets and alloc_list:
+            st.markdown("### Asset → Goal Allocation")
+            st.caption("Shows which assets are tagged to which goals, their projected value at the goal year, and contribution.")
+            ai_now   = avg_inflation()
+            alloc_rows = []
+            for g in goal_projections():
+                gname    = g["name"] or "(unnamed)"
+                g_alloc  = alloc_map.get(gname, {})
+                yr       = goal_start_year(g)
+
+                # Tagged assets
+                tagged = [a for a in st.session_state.assets
+                          if gname and gname in (a.get("tagged_goals") or [])]
+                for a in tagged:
+                    proj_val = asset_value_at_year(a, yr, ai_now)
+                    alloc_rows.append({
+                        "Goal":          gname,
+                        "Goal Year":     str(g["start_year"] if g["start_year"] > 1000 else rel_to_cal(yr)),
+                        "Asset":         a["name"] or "(unnamed)",
+                        "Class":         a["asset_class"],
+                        "Today's Value": fmt_full(a["value"]),
+                        "Proj. Value":   fmt(proj_val),
+                        "Role":          "🏷️ Tagged",
+                    })
+
+                # Untagged contribution
+                unc = g_alloc.get("untagged_contrib", 0)
+                if unc > 0:
+                    alloc_rows.append({
+                        "Goal":          gname,
+                        "Goal Year":     str(g["start_year"] if g["start_year"] > 1000 else rel_to_cal(yr)),
+                        "Asset":         "(Untagged pool)",
+                        "Class":         "Mixed",
+                        "Today's Value": "—",
+                        "Proj. Value":   fmt(unc),
+                        "Role":          "🔄 Filler",
+                    })
+
+                if not tagged and unc == 0:
+                    alloc_rows.append({
+                        "Goal":          gname,
+                        "Goal Year":     str(g["start_year"] if g["start_year"] > 1000 else rel_to_cal(yr)),
+                        "Asset":         "(No assets allocated)",
+                        "Class":         "—",
+                        "Today's Value": "—",
+                        "Proj. Value":   "—",
+                        "Role":          "⚠️ Unallocated",
+                    })
+
+            if alloc_rows:
+                st.dataframe(alloc_rows, width="stretch", hide_index=True)
 
 # ══════════════════════════════════════════════════════
 # INCOME & EXPENSES
