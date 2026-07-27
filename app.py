@@ -46,26 +46,27 @@ def rel_to_cal(rel_year):
 # HELPERS
 # ══════════════════════════════════════════════════════
 
-def indian_format(n):
-    n = int(round(n)); neg = n < 0; n = abs(n); s = str(n)
-    if len(s) <= 3: return ("-" if neg else "") + s
-    last3 = s[-3:]; rest = s[:-3]; parts = []
-    for i, c in enumerate(reversed(rest)):
-        if i > 0 and i % 2 == 0: parts.append(",")
-        parts.append(c)
-    return ("-" if neg else "") + "".join(reversed(parts)) + "," + last3
+def intl_format(n):
+    """Format a number with standard international (Western) comma grouping — groups of 3 digits."""
+    n = int(round(n)); neg = n < 0; n = abs(n)
+    s = f"{n:,}"
+    return ("-" if neg else "") + s
 
 def fmt(n):
+    """Short display format: Billion / Million abbreviations for large numbers."""
     n = round(n)
-    if abs(n) >= 1e7: return f"₹{n/1e7:.2f} Cr"
-    if abs(n) >= 1e5: return f"₹{n/1e5:.2f} L"
-    return f"₹{indian_format(n)}"
+    if abs(n) >= 1e9: return f"{n/1e9:.2f} B"
+    if abs(n) >= 1e6: return f"{n/1e6:.2f} M"
+    return intl_format(n)
 
-def fmt_full(n): return f"₹{indian_format(n)}"
+def fmt_full(n):
+    """Full number with comma grouping, no abbreviation."""
+    return intl_format(n)
 
-def parse_indian(s):
+def parse_amount(s):
+    """Parse a comma-formatted (or plain) number string back to a value."""
     if not s or not str(s).strip(): return 0
-    c = str(s).replace(",","").replace("₹","").replace(" ","").strip()
+    c = str(s).replace(",", "").replace(" ", "").strip()
     try: return float(c) if "." in c else int(c)
     except: return 0
 
@@ -73,12 +74,12 @@ def compound(principal, rate_pct, years):
     return _compound_cached(float(principal), float(rate_pct), float(years))
 
 def currency_input(label, value, key, **kwargs):
-    """Text input that displays Indian-formatted numbers."""
+    """Text input that displays internationally-formatted numbers (comma grouped)."""
     parsed_val = int(round(value)) if value else 0
-    display    = indian_format(parsed_val) if parsed_val else ""
+    display    = intl_format(parsed_val) if parsed_val else ""
     raw = st.text_input(label, value=display, key=key,
-                        placeholder="e.g. 18,00,000", **kwargs)
-    return parse_indian(raw)
+                        placeholder="e.g. 1,800,000", **kwargs)
+    return parse_amount(raw)
 
 def parse_date(s):
     """Parse a date string to a date object; return TODAY if blank/invalid."""
@@ -451,7 +452,7 @@ def import_goals_from_excel(uploaded_file):
                 if c and pd.notna(row[c]):
                     val = row[c]
                     if field == "current_cost":
-                        g[field] = parse_indian(str(val))
+                        g[field] = parse_amount(str(val))
                     elif field == "inflation":
                         g[field] = float(str(val).replace("%","").strip() or 6)
                     elif field in ("start_year","end_year"):
@@ -474,7 +475,7 @@ def import_assets_from_excel(uploaded_file):
     """
     Expected columns (case-insensitive):
     Asset Name | Asset Type | Class | Purchase Date | Invested Amount | Current Value |
-    Maturity Amount | Maturity Date | CAGR % | Tag Goals | SWP ₹/mo | SWP Start Yr
+    Maturity Amount | Maturity Date | CAGR % | Tag Goals | SWP Monthly | SWP Start Yr
     """
     try:
         df = pd.read_excel(uploaded_file)
@@ -490,7 +491,7 @@ def import_assets_from_excel(uploaded_file):
             "maturity_date":  ["maturity date","due date","end date"],
             "cagr":           ["cagr %","cagr","return %","expected return","return"],
             "tagged_goals":   ["tag goals","goals","tagged goals","goal"],
-            "swp_monthly":    ["swp ₹/mo","swp","swp amount","monthly swp","swp monthly"],
+            "swp_monthly":    ["swp monthly","swp","swp amount","swp /mo"],
             "swp_start_year": ["swp start yr","swp start year","swp year","swp from"],
         }
         def find_col(df, options):
@@ -510,7 +511,7 @@ def import_assets_from_excel(uploaded_file):
                 if c and pd.notna(row[c]):
                     val = row[c]
                     if field in ("invested","value","maturity_amt","swp_monthly"):
-                        a[field] = parse_indian(str(val))
+                        a[field] = parse_amount(str(val))
                     elif field == "cagr":
                         a[field] = float(str(val).replace("%","").strip() or 0)
                     elif field == "swp_start_year":
@@ -544,13 +545,13 @@ def import_assets_from_excel(uploaded_file):
 
 
 def import_income_from_excel(uploaded_file):
-    """Expected columns: Source | Monthly Rs | Growth %/yr | Start Year | End Year"""
+    """Expected columns: Source | Monthly Amount | Growth %/yr | Start Year | End Year"""
     try:
         df = pd.read_excel(uploaded_file)
         df.columns = [c.strip().lower() for c in df.columns]
         col_map = {
             "name":       ["source","name","income source","description"],
-            "monthly":    ["monthly rs","monthly","amount","monthly amount","rs","monthly ₹","₹"],
+            "monthly":    ["monthly rs","monthly","amount","monthly amount","rs"],
             "growth":     ["growth %/yr","growth","growth rate","growth %","rate"],
             "start_year": ["start year","start","from year","from"],
             "end_year":   ["end year","end","to year","until","to"],
@@ -566,7 +567,7 @@ def import_income_from_excel(uploaded_file):
                 c = find_col(df, options)
                 if c and pd.notna(row[c]):
                     val = row[c]
-                    if field == "monthly": inc[field] = parse_indian(str(val))
+                    if field == "monthly": inc[field] = parse_amount(str(val))
                     elif field == "growth": inc[field] = float(str(val).replace("%","").strip() or 5)
                     elif field in ("start_year","end_year"):
                         raw = int(float(str(val).strip() or THIS_YEAR))
@@ -581,13 +582,13 @@ def import_income_from_excel(uploaded_file):
 
 
 def import_expenses_from_excel(uploaded_file):
-    """Expected columns: Name | Monthly Rs | Inflation % | Start Year | End Year | Cumulative"""
+    """Expected columns: Name | Monthly Amount | Inflation % | Start Year | End Year | Cumulative"""
     try:
         df = pd.read_excel(uploaded_file)
         df.columns = [c.strip().lower() for c in df.columns]
         col_map = {
             "name":       ["name","expense","description","category"],
-            "monthly":    ["monthly rs","monthly","amount","monthly amount","rs","monthly ₹","₹"],
+            "monthly":    ["monthly rs","monthly","amount","monthly amount","rs"],
             "inflation":  ["inflation %","inflation","inflation rate","rate"],
             "start_year": ["start year","start","from year","from"],
             "end_year":   ["end year","end","to year","until","to"],
@@ -604,7 +605,7 @@ def import_expenses_from_excel(uploaded_file):
                 c = find_col(df, options)
                 if c and pd.notna(row[c]):
                     val = row[c]
-                    if field == "monthly": exp[field] = parse_indian(str(val))
+                    if field == "monthly": exp[field] = parse_amount(str(val))
                     elif field == "inflation": exp[field] = float(str(val).replace("%","").strip() or 6)
                     elif field in ("start_year","end_year"):
                         raw = int(float(str(val).strip() or THIS_YEAR))
@@ -632,17 +633,17 @@ def expense_income_chart():
         for j,v in enumerate(vals): exp_totals[j]+=v
         fig.add_trace(go.Scatter(x=years, y=vals, name=e["name"] or f"Expense {i+1}",
             line=dict(color=LINE_COLORS[i%len(LINE_COLORS)], width=2),
-            hovertemplate="₹%{y:,.0f}<extra>%{fullData.name}</extra>"))
+            hovertemplate="%{y:,.0f}<extra>%{fullData.name}</extra>"))
     if st.session_state.expenses:
         fig.add_trace(go.Scatter(x=years, y=exp_totals, name="Total Expenses",
             line=dict(color="#dc2626", width=3, dash="dash"),
-            hovertemplate="₹%{y:,.0f}<extra>Total Expenses</extra>"))
+            hovertemplate="%{y:,.0f}<extra>Total Expenses</extra>"))
     if st.session_state.income:
         inc = [sum(compound(e["monthly"],e.get("growth",5.0),y) for e in st.session_state.income) for y in years]
         fig.add_trace(go.Scatter(x=years, y=inc, name="Total Income",
             line=dict(color="#059669", width=3, dash="dot"),
-            hovertemplate="₹%{y:,.0f}<extra>Total Income</extra>"))
-    fig.update_layout(title="Monthly Income vs Expenses", xaxis_title="Year", yaxis_title="₹",
+            hovertemplate="%{y:,.0f}<extra>Total Income</extra>"))
+    fig.update_layout(title="Monthly Income vs Expenses", xaxis_title="Year", yaxis_title="Amount",
         hovermode="x unified", template=None, height=400,
         legend=dict(orientation="h", y=-0.15), margin=dict(l=60,r=20,t=50,b=60))
     return fig
@@ -661,12 +662,12 @@ def asset_chart():
         label   = f"{name} (SWP {fmt(swp_amt)}/mo Yr{swp_yr}+)" if swp_amt else name
         fig.add_trace(go.Scatter(x=years, y=vals, name=label,
             line=dict(color=LINE_COLORS[i%len(LINE_COLORS)], width=2),
-            hovertemplate="₹%{y:,.0f}<extra>%{fullData.name}</extra>"))
+            hovertemplate="%{y:,.0f}<extra>%{fullData.name}</extra>"))
     if st.session_state.assets:
         fig.add_trace(go.Scatter(x=years, y=totals, name="Total Portfolio",
             line=dict(color="#1e293b", width=3, dash="dash"),
-            hovertemplate="₹%{y:,.0f}<extra>Total Portfolio</extra>"))
-    fig.update_layout(title="Asset Growth Projection (net of SWP)", xaxis_title="Year", yaxis_title="₹",
+            hovertemplate="%{y:,.0f}<extra>Total Portfolio</extra>"))
+    fig.update_layout(title="Asset Growth Projection (net of SWP)", xaxis_title="Year", yaxis_title="Amount",
         hovermode="x unified", template=None, height=400,
         legend=dict(orientation="h", y=-0.2), margin=dict(l=60,r=20,t=50,b=80))
     return fig
@@ -679,7 +680,7 @@ def allocation_pie_chart():
     fig = go.Figure(go.Pie(labels=labels, values=values, hole=0.45,
         marker=dict(colors=LINE_COLORS[:len(labels)]),
         textinfo="label+percent", textposition="outside",
-        hovertemplate="%{label}: ₹%{value:,.0f}<extra></extra>"))
+        hovertemplate="%{label}: %{value:,.0f}<extra></extra>"))
     fig.update_layout(title="Asset Allocation", template=None, height=350,
         margin=dict(l=20,r=20,t=50,b=20), showlegend=False)
     return fig
@@ -694,7 +695,7 @@ def asset_type_pie_chart():
     fig = go.Figure(go.Pie(labels=labels, values=values, hole=0.45,
         marker=dict(colors=LINE_COLORS[:len(labels)]),
         textinfo="label+percent", textposition="outside",
-        hovertemplate="%{label}: ₹%{value:,.0f}<extra></extra>"))
+        hovertemplate="%{label}: %{value:,.0f}<extra></extra>"))
     fig.update_layout(title="Asset Allocation by Type", template=None, height=350,
         margin=dict(l=20,r=20,t=50,b=20), showlegend=False)
     return fig
@@ -704,9 +705,9 @@ def nw_bar_chart():
     years = list(range(0, max_y+1, 5))
     vals  = [portfolio_at_year(y) for y in years]
     fig   = go.Figure(go.Bar(x=[f"Yr {y}" for y in years], y=vals,
-        marker_color="#2563eb", hovertemplate="₹%{y:,.0f}<extra></extra>"))
+        marker_color="#2563eb", hovertemplate="%{y:,.0f}<extra></extra>"))
     fig.update_layout(title="Net Worth Projection (net of SWP)", template=None, height=350,
-        margin=dict(l=60,r=20,t=50,b=40), yaxis_title="₹")
+        margin=dict(l=60,r=20,t=50,b=40), yaxis_title="Amount")
     return fig
 
 def retirement_drawdown_chart(rows):
@@ -719,17 +720,17 @@ def retirement_drawdown_chart(rows):
     fig.add_trace(go.Scatter(x=quarters_label, y=corpus_vals, name="Corpus",
         fill="tozeroy", fillcolor="rgba(37,99,235,0.1)",
         line=dict(color="#2563eb", width=2),
-        hovertemplate="₹%{y:,.0f}<extra>Corpus</extra>"))
+        hovertemplate="%{y:,.0f}<extra>Corpus</extra>"))
     fig.add_trace(go.Bar(x=quarters_label, y=withdrawal_vals, name="Quarterly Withdrawal",
         marker_color="rgba(220,38,38,0.5)", yaxis="y2",
-        hovertemplate="₹%{y:,.0f}<extra>Withdrawal</extra>"))
+        hovertemplate="%{y:,.0f}<extra>Withdrawal</extra>"))
     fig.update_layout(
         title="Corpus Drawdown Over Time",
         xaxis=dict(title="Quarter", tickangle=-45,
             tickvals=quarters_label[::4],
             ticktext=[quarters_label[i] for i in range(0,len(quarters_label),4)]),
-        yaxis=dict(title="Corpus ₹", tickformat=","),
-        yaxis2=dict(title="Withdrawal ₹", overlaying="y", side="right", showgrid=False),
+        yaxis=dict(title="Corpus", tickformat=","),
+        yaxis2=dict(title="Withdrawal", overlaying="y", side="right", showgrid=False),
         hovermode="x unified", template=None, height=420,
         legend=dict(orientation="h", y=-0.25), margin=dict(l=60,r=60,t=50,b=80))
     return fig
@@ -914,7 +915,7 @@ def generate_full_pdf_report():
             today_value_by_goal[gname] = (cost, allocated_future, allocated_today, npv_of_cost)
             remaining, prev_start, last_yr = max(pool - cost, 0), yr, yr
 
-        headers = ["Goal","Start","End","Cumulative Cost","Target Cost","NPV","Alloc. (Today's ₹)","% Met","Status"]
+        headers = ["Goal","Start","End","Cumulative Cost","Target Cost","NPV","Alloc. (Today's Value)","% Met","Status"]
         rows = []
         tot_cum = tot_target = tot_npv = tot_alloc_today = 0.0
         for g in projs:
@@ -951,7 +952,7 @@ def generate_full_pdf_report():
             story.append(Spacer(1, 8))
     if st.session_state.income:
         story.append(Paragraph("Monthly Income Sources", sub_style))
-        headers = ["Source","Monthly ₹","Growth %/yr","Start Year","End Year"]
+        headers = ["Source","Monthly","Growth %/yr","Start Year","End Year"]
         rows = [[i["name"] or "—", fmt_full(i["monthly"]), f'{i.get("growth",5.0)}%',
                  str(i.get("start_year", THIS_YEAR)), str(i.get("end_year", THIS_YEAR+30))]
                 for i in st.session_state.income]
@@ -960,7 +961,7 @@ def generate_full_pdf_report():
 
     if st.session_state.expenses:
         story.append(Paragraph("Monthly Expenses", sub_style))
-        headers = ["Name","Monthly ₹","Inflation %","Start Year","End Year","Cumulative"]
+        headers = ["Name","Monthly","Inflation %","Start Year","End Year","Cumulative"]
         rows = [[e["name"] or "—", fmt_full(e["monthly"]), f'{e["inflation"]}%',
                  str(e.get("start_year", THIS_YEAR)), str(e.get("end_year", THIS_YEAR+30)),
                  "Yes" if e.get("cumulative") else "No"]
@@ -1148,6 +1149,80 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+st.markdown("""
+<div style="
+    background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
+    border-left: 4px solid #2563eb;
+    border-radius: 8px;
+    padding: 14px 20px;
+    margin-bottom: 12px;
+">
+<details>
+<summary style="color:#93c5fd; font-size:14px; font-weight:600; cursor:pointer; list-style:none;">
+    ℹ️ How to use this planner &nbsp;·&nbsp;
+    <span style="color:#64748b; font-weight:400; font-size:12px;">Click to expand</span>
+</summary>
+<div style="margin-top:12px; color:#cbd5e1; font-size:13px; line-height:1.7;">
+
+<b style="color:#93c5fd;">Step 1 — Income &amp; Expenses</b><br/>
+Enter monthly income sources (salary, rental, freelance) in the spreadsheet-style table — each with
+its own growth rate and active start/end years. Do the same for expenses (rent, groceries, loan EMIs)
+with an inflation rate per item. Add or delete rows directly in the table, or bulk-import via Excel.
+
+<br/><br/><b style="color:#93c5fd;">Step 2 — Goals</b><br/>
+Add financial goals with a cost in today's money, a start year, end year, and recurrence frequency.
+One-time goals (a home purchase) use the same start and end year with frequency 0. Recurring goals
+(school fees, retirement) set frequency to 1 for annual, 2 for every two years, etc. — the app
+automatically inflates and totals every future payment, and always funds recurring goals against
+their realistic multi-year cost, not just the first payment.
+
+<br/><br/><b style="color:#93c5fd;">Step 3 — Assets</b><br/>
+Add investments and savings in the table: name, an optional free-text <b>Asset Type</b> (e.g. Mutual
+Fund, FD, Direct Equity) alongside the broader <b>Class</b> dropdown, current value, and expected
+CAGR. For fixed instruments enter the invested amount, maturity amount, and dates — CAGR and
+post-tax maturity value are calculated automatically. Tag an asset to one or more goals to earmark
+it; untagged assets form a shared pool that fills any remaining gaps. Set up a systematic withdrawal
+plan (SWP) on an asset if it's already being drawn down. Pie charts break your portfolio down by
+Class and by Type.
+
+<br/><br/><b style="color:#93c5fd;">Step 4 — Retirement</b><br/>
+Select your retirement goal — the corpus, return rate, and withdrawal amount are pre-filled from
+whatever assets you've tagged to it. The tab runs a real quarter-by-quarter drawdown simulation:
+each withdrawal is taxed only on its gain portion (12.5% for equity-type assets, 30% for
+debt-type, using long-term capital gains logic), while the remaining balance keeps compounding.
+It shows exactly how many years the corpus lasts, with a chart and a full year-by-year breakdown.
+
+<br/><br/><b style="color:#93c5fd;">Dashboard</b><br/>
+Everything rolls up here: net worth, monthly cash flow, a goal-by-goal funding summary (including
+Net Present Value and how much of your current portfolio is allocated to each goal), a surplus or
+shortfall banner, and personalized recommendations.
+
+<br/><br/><b style="color:#93c5fd;">Tips</b><br/>
+• Tag assets to goals for more accurate, ring-fenced allocation<br/>
+• Use <b>💾 Save &amp; Load</b> below to download your data as a file and reload it next session —
+  this includes your Retirement tab settings too<br/>
+• Use <b>📄 Export All Tabs to PDF</b> to generate a single shareable report with every chart and table<br/>
+• Import Income, Expenses, Goals, and Assets in bulk via Excel — look for the import panel in each tab<br/>
+• All figures use plain comma-grouped numbers with Million/Billion abbreviations for large amounts —
+  enter and read values in whatever currency you're tracking
+
+<br/><br/>
+<span style="color:#f59e0b;">⚠️ Disclaimer:</span>
+<span style="color:#94a3b8;"> This calculator is for personal planning only and does not constitute financial advice.
+Projections are estimates — actual returns, inflation and tax may differ.
+Consult a qualified financial advisor before making investment decisions.</span>
+
+<br/><br/>
+<span style="color:#34d399;">🔒 Privacy:</span>
+<span style="color:#94a3b8;"> Your financial data — income, expenses, goals, and assets — never leaves your
+browser session. It is never stored, transmitted, or retained anywhere; it's lost when you close
+the tab unless you download it using the Save button below. The one exception: if you submit
+feedback below, only your rating and comment text are sent — nothing from your financial data.</span>
+</div>
+</details>
+</div>
+""", unsafe_allow_html=True)
+
 with st.expander("💾 Save & Load Your Data", expanded=False):
     st.caption("Your data resets when you close this tab. Download to keep it safe.")
     sc, lc, rc = st.columns(3)
@@ -1228,60 +1303,6 @@ with st.expander("📄 Export All Tabs to PDF", expanded=False):
             mime="application/pdf",
             use_container_width=True,
         )
-
-st.markdown("""
-<div style="
-    background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
-    border-left: 4px solid #2563eb;
-    border-radius: 8px;
-    padding: 14px 20px;
-    margin-bottom: 12px;
-">
-<details>
-<summary style="color:#93c5fd; font-size:14px; font-weight:600; cursor:pointer; list-style:none;">
-    ℹ️ How to use this planner &nbsp;·&nbsp;
-    <span style="color:#64748b; font-weight:400; font-size:12px;">Click to expand</span>
-</summary>
-<div style="margin-top:12px; color:#cbd5e1; font-size:13px; line-height:1.7;">
-
-<b style="color:#93c5fd;">Step 1 — Income & Expenses</b><br/>
-Add monthly income sources (salary, rental, freelance) each with a growth rate and active years.
-Add monthly expenses (rent, groceries, EMIs) each with an inflation rate and active years.
-
-<br/><br/><b style="color:#93c5fd;">Step 2 — Goals</b><br/>
-Add financial goals with a cost in today's money, start year, end year, and recurrence frequency.
-One-time goals (home purchase) use the same start and end year. Recurring goals (school fees)
-set frequency to 1 for annual. The app inflates each payment to its actual year automatically.
-
-<br/><br/><b style="color:#93c5fd;">Step 3 — Assets</b><br/>
-Add investments and savings. For fixed instruments (FDs, bonds) enter maturity amount and dates —
-CAGR is auto-calculated. Tag each asset to a goal to earmark funds. Set up SWP if needed.
-
-<br/><br/><b style="color:#93c5fd;">Step 4 — Retirement</b><br/>
-Select your retirement goal, confirm the projected corpus, set a quarterly withdrawal.
-The app simulates how long the corpus lasts with tax-adjusted returns (12.5% equity, 30% debt).
-
-<br/><br/><b style="color:#93c5fd;">Tips</b><br/>
-• Toggle <b>Cumulative</b> on a goal to see total cost across all occurrences<br/>
-• Tag assets to goals for ring-fenced allocation on the Dashboard<br/>
-• Use <b>💾 Save & Load</b> above to download your data between sessions<br/>
-• Import goals and assets in bulk via Excel in each tab
-
-<br/><br/>
-<span style="color:#f59e0b;">⚠️ Disclaimer:</span>
-<span style="color:#94a3b8;"> This calculator is for personal planning only and does not constitute financial advice.
-Projections are estimates — actual returns, inflation and tax may differ.
-Consult a qualified financial advisor before making investment decisions.</span>
-
-<br/><br/>
-<span style="color:#34d399;">🔒 Privacy:</span>
-<span style="color:#94a3b8;"> This app does not store, transmit, or retain any of your data.
-Everything runs locally in your browser session. Data is lost when you close the tab
-unless you download it using the Save button above.</span>
-</div>
-</details>
-</div>
-""", unsafe_allow_html=True)
 
 tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_retire = st.tabs(
     ["Dashboard","Income & Expenses","Goals","Assets","🏖️ Retirement"])
@@ -1555,6 +1576,39 @@ with tab_dash:
                 unsafe_allow_html=True,
             )
 
+    # ── Feedback ──
+    st.markdown("---")
+    st.markdown("### 💬 Feedback")
+    st.caption("Found this useful? Let us know, or tell us what's missing.")
+    st.caption(
+        "🔒 Only your rating and the comment text below are ever sent when you submit — "
+        "nothing else on this page (your income, expenses, goals, or assets) is read or transmitted."
+    )
+    fb_cols = st.columns([1, 3])
+    with fb_cols[0]:
+        rating = st.feedback("thumbs", key=f"v{_v}_fb_thumbs")
+    with fb_cols[1]:
+        fb_text = st.text_input("Comments (optional)", key=f"v{_v}_fb_text",
+            label_visibility="collapsed", placeholder="Any comments or feature requests?")
+    if st.button("Submit Feedback", key=f"v{_v}_fb_submit"):
+        # ── Payload boundary — audit this if you're checking what gets sent ──
+        # This dict is deliberately built from ONLY the two feedback widgets above
+        # (`rating`, `fb_text`) plus a timestamp. It never reads st.session_state.income,
+        # .expenses, .goals, .assets, or any other financial field — so no matter what a
+        # person has entered elsewhere in the app, none of it can end up in this payload.
+        feedback_payload = {
+            "rating":  rating,
+            "comment": fb_text,
+            "ts":      datetime.now().isoformat(),
+        }
+        # NOTE: This capture is session-local only — nothing is sent anywhere by default.
+        # To collect feedback across all users, POST feedback_payload to a webhook, e.g. a
+        # Google Apps Script Web App connected to a Google Sheet (free, no backend needed):
+        #   import requests
+        #   requests.post("https://script.google.com/macros/s/XXXX/exec", json=feedback_payload)
+        st.session_state.setdefault("_feedback_log", []).append(feedback_payload)
+        st.success("Thanks for the feedback!")
+
 # ══════════════════════════════════════════════════════
 # INCOME & EXPENSES
 # ══════════════════════════════════════════════════════
@@ -1566,7 +1620,7 @@ with tab_inc_exp:
     st.caption(f"Total: {fmt_full(total_monthly_income())}/month")
 
     with st.expander("📥 Import Income from Excel", expanded=False):
-        st.caption("Columns: Source | Monthly ₹ | Growth %/yr | Start Year | End Year")
+        st.caption("Columns: Source | Monthly | Growth %/yr | Start Year | End Year")
         inc_file = st.file_uploader("Upload Income Excel", type=["xlsx","xls"], key=f"v{_v}_inc_upload")
         if inc_file:
             new_inc, err = import_income_from_excel(inc_file)
@@ -1589,14 +1643,14 @@ with tab_inc_exp:
     # ── Fast batch editor ──
     inc_df = pd.DataFrame([{
         "Source":       inc.get("name", ""),
-        "Monthly ₹":    int(inc.get("monthly", 0) or 0),
+        "Monthly":    int(inc.get("monthly", 0) or 0),
         "Growth %/yr":  float(inc.get("growth", 5.0) or 5.0),
         "Start Year":   int(inc.get("start_year", THIS_YEAR) or THIS_YEAR),
         "End Year":     int(inc.get("end_year", THIS_YEAR + 30) or THIS_YEAR + 30),
     } for inc in st.session_state.income])
 
     if inc_df.empty:
-        inc_df = pd.DataFrame(columns=["Source", "Monthly ₹", "Growth %/yr", "Start Year", "End Year"])
+        inc_df = pd.DataFrame(columns=["Source", "Monthly", "Growth %/yr", "Start Year", "End Year"])
 
     edited_inc = st.data_editor(
         inc_df,
@@ -1605,7 +1659,7 @@ with tab_inc_exp:
         key=f"inc_editor_v{_v}",
         column_config={
             "Source":      st.column_config.TextColumn("Source", width="large"),
-            "Monthly ₹":   st.column_config.NumberColumn("Monthly ₹", format="%d", min_value=0),
+            "Monthly":   st.column_config.NumberColumn("Monthly", format="%d", min_value=0),
             "Growth %/yr": st.column_config.NumberColumn("Growth %/yr", format="%.1f", min_value=0.0, max_value=30.0, step=0.5),
             "Start Year":  st.column_config.NumberColumn("Start Year", format="%d", min_value=2000, max_value=2100, step=1),
             "End Year":    st.column_config.NumberColumn("End Year", format="%d", min_value=2000, max_value=2100, step=1),
@@ -1617,7 +1671,7 @@ with tab_inc_exp:
     for _, r in edited_inc.iterrows():
         raw_name = r.get("Source", "")
         name = "" if pd.isna(raw_name) else str(raw_name).strip()
-        raw_monthly = r.get("Monthly ₹", 0)
+        raw_monthly = r.get("Monthly", 0)
         monthly = 0 if pd.isna(raw_monthly) else int(raw_monthly)
         if not name and monthly == 0: continue  # skip ghost/empty rows
         new_inc_state.append({
@@ -1637,7 +1691,7 @@ with tab_inc_exp:
     st.caption(f"Total: {fmt_full(total_monthly_expense())}/month · Avg inflation: {avg_inflation():.1f}%")
 
     with st.expander("📥 Import Expenses from Excel", expanded=False):
-        st.caption("Columns: Name | Monthly ₹ | Inflation % | Start Year | End Year | Cumulative")
+        st.caption("Columns: Name | Monthly | Inflation % | Start Year | End Year | Cumulative")
         exp_file = st.file_uploader("Upload Expenses Excel", type=["xlsx","xls"], key=f"v{_v}_exp_upload")
         if exp_file:
             new_exp, err = import_expenses_from_excel(exp_file)
@@ -1659,7 +1713,7 @@ with tab_inc_exp:
 
     exp_df = pd.DataFrame([{
         "Name":         e.get("name", ""),
-        "Monthly ₹":    int(e.get("monthly", 0) or 0),
+        "Monthly":    int(e.get("monthly", 0) or 0),
         "Inflation %":  float(e.get("inflation", 6.0) or 6.0),
         "Start Year":   int(e.get("start_year", THIS_YEAR) or THIS_YEAR),
         "End Year":     int(e.get("end_year", THIS_YEAR + 30) or THIS_YEAR + 30),
@@ -1667,7 +1721,7 @@ with tab_inc_exp:
     } for e in st.session_state.expenses])
 
     if exp_df.empty:
-        exp_df = pd.DataFrame(columns=["Name", "Monthly ₹", "Inflation %", "Start Year", "End Year", "Cumulative"])
+        exp_df = pd.DataFrame(columns=["Name", "Monthly", "Inflation %", "Start Year", "End Year", "Cumulative"])
 
     edited_exp = st.data_editor(
         exp_df,
@@ -1676,7 +1730,7 @@ with tab_inc_exp:
         key=f"exp_editor_v{_v}",
         column_config={
             "Name":        st.column_config.TextColumn("Name", width="large"),
-            "Monthly ₹":   st.column_config.NumberColumn("Monthly ₹", format="%d", min_value=0),
+            "Monthly":   st.column_config.NumberColumn("Monthly", format="%d", min_value=0),
             "Inflation %": st.column_config.NumberColumn("Inflation %", format="%.1f", min_value=0.0, max_value=30.0, step=0.5),
             "Start Year":  st.column_config.NumberColumn("Start Year", format="%d", min_value=2000, max_value=2100, step=1),
             "End Year":    st.column_config.NumberColumn("End Year", format="%d", min_value=2000, max_value=2100, step=1),
@@ -1688,7 +1742,7 @@ with tab_inc_exp:
     for _, r in edited_exp.iterrows():
         raw_name = r.get("Name", "")
         name = "" if pd.isna(raw_name) else str(raw_name).strip()
-        raw_monthly = r.get("Monthly ₹", 0)
+        raw_monthly = r.get("Monthly", 0)
         monthly = 0 if pd.isna(raw_monthly) else int(raw_monthly)
         if not name and monthly == 0: continue
         new_exp_state.append({
@@ -1787,7 +1841,7 @@ with tab_goals:
     # Fast batch editor for goals
     goals_df = pd.DataFrame([{
         "Goal Name":       g.get("name", ""),
-        "Cost Today ₹":    int(g.get("current_cost", 0) or 0),
+        "Cost Today":    int(g.get("current_cost", 0) or 0),
         "Inflation %":     float(g.get("inflation", 6.0) or 6.0),
         "Start Year":      int(g.get("start_year", THIS_YEAR + 5) or THIS_YEAR + 5),
         "End Year":        int(g.get("end_year", g.get("start_year", THIS_YEAR + 5)) or THIS_YEAR + 5),
@@ -1796,7 +1850,7 @@ with tab_goals:
     } for g in st.session_state.goals])
 
     if goals_df.empty:
-        goals_df = pd.DataFrame(columns=["Goal Name", "Cost Today ₹", "Inflation %", "Start Year", "End Year", "Frequency (yrs)", "Cumulative"])
+        goals_df = pd.DataFrame(columns=["Goal Name", "Cost Today", "Inflation %", "Start Year", "End Year", "Frequency (yrs)", "Cumulative"])
 
     edited_goals = st.data_editor(
         goals_df,
@@ -1805,7 +1859,7 @@ with tab_goals:
         key=f"goals_editor_v{_v}",
         column_config={
             "Goal Name":       st.column_config.TextColumn("Goal Name", width="large"),
-            "Cost Today ₹":    st.column_config.NumberColumn("Cost Today ₹", format="%d", min_value=0),
+            "Cost Today":    st.column_config.NumberColumn("Cost Today", format="%d", min_value=0),
             "Inflation %":     st.column_config.NumberColumn("Inflation %", format="%.1f", min_value=0.0, max_value=30.0, step=0.5),
             "Start Year":      st.column_config.NumberColumn("Start Year", format="%d", min_value=2000, max_value=2100, step=1),
             "End Year":        st.column_config.NumberColumn("End Year", format="%d", min_value=2000, max_value=2100, step=1),
@@ -1818,7 +1872,7 @@ with tab_goals:
     for _, r in edited_goals.iterrows():
         raw_name = r.get("Goal Name", "")
         name = "" if pd.isna(raw_name) else str(raw_name).strip()
-        raw_cost = r.get("Cost Today ₹", 0)
+        raw_cost = r.get("Cost Today", 0)
         cost = 0 if pd.isna(raw_cost) else int(raw_cost)
         if not name and cost == 0: continue
         sy = int(r.get("Start Year", THIS_YEAR + 5) or THIS_YEAR + 5)
@@ -1877,8 +1931,8 @@ with tab_assets:
     # Excel import
     with st.expander("📥 Import Assets from Excel", expanded=False):
         st.caption(
-            "Upload an .xlsx with columns: Asset Name, Class, Purchase Date, Invested Amount, "
-            "Current Value, Maturity Amount, Maturity Date, CAGR %, Tag Goals, SWP ₹/mo, SWP Start Yr"
+            "Upload an .xlsx with columns: Asset Name, Asset Type, Class, Purchase Date, Invested Amount, "
+            "Current Value, Maturity Amount, Maturity Date, CAGR %, Tag Goals, SWP Monthly, SWP Start Yr"
         )
         asset_file = st.file_uploader("Upload Assets Excel", type=["xlsx","xls"], key=f"v{_v}_asset_upload")
         if asset_file:
@@ -1905,20 +1959,20 @@ with tab_assets:
         "Asset Type":       a.get("asset_type", ""),
         "Class":            a.get("asset_class", "Equity") if a.get("asset_class") in ASSET_CLASSES else "Equity",
         "Purchase Date":    a.get("purchase_date", "") or "",
-        "Invested ₹":       int(a.get("invested", 0) or 0),
-        "Current Value ₹":  int(a.get("value", 0) or 0),
-        "Maturity ₹":       int(a.get("maturity_amt", 0) or 0),
+        "Invested":       int(a.get("invested", 0) or 0),
+        "Current Value":  int(a.get("value", 0) or 0),
+        "Maturity Amount":       int(a.get("maturity_amt", 0) or 0),
         "Maturity Date":    a.get("maturity_date", "") or "",
         "CAGR %":           float(a.get("cagr", 0.0) or 0.0),
         "Tag Goals":        ", ".join(a.get("tagged_goals") or []),
-        "SWP ₹/mo":         int(a.get("swp_monthly", 0) or 0),
+        "SWP Monthly":         int(a.get("swp_monthly", 0) or 0),
         "SWP Start Yr":     int(a.get("swp_start_year", 0) or 0),
     } for a in st.session_state.assets])
 
     if assets_df.empty:
         assets_df = pd.DataFrame(columns=[
-            "Asset Name", "Asset Type", "Class", "Purchase Date", "Invested ₹", "Current Value ₹",
-            "Maturity ₹", "Maturity Date", "CAGR %", "Tag Goals", "SWP ₹/mo", "SWP Start Yr"
+            "Asset Name", "Asset Type", "Class", "Purchase Date", "Invested", "Current Value",
+            "Maturity Amount", "Maturity Date", "CAGR %", "Tag Goals", "SWP Monthly", "SWP Start Yr"
         ])
 
     edited_assets = st.data_editor(
@@ -1932,13 +1986,13 @@ with tab_assets:
             "Asset Type":      st.column_config.TextColumn("Asset Type", width="medium", help="e.g. Mutual Fund, FD, PMS, Direct Equity, Sovereign Gold Bond"),
             "Class":           st.column_config.SelectboxColumn("Class", options=ASSET_CLASSES, required=True),
             "Purchase Date":   st.column_config.TextColumn("Purchase Date", help="DD/MM/YYYY"),
-            "Invested ₹":      st.column_config.NumberColumn("Invested ₹", format="%d", min_value=0),
-            "Current Value ₹": st.column_config.NumberColumn("Current Value ₹", format="%d", min_value=0),
-            "Maturity ₹":      st.column_config.NumberColumn("Maturity ₹", format="%d", min_value=0),
+            "Invested":      st.column_config.NumberColumn("Invested", format="%d", min_value=0),
+            "Current Value": st.column_config.NumberColumn("Current Value", format="%d", min_value=0),
+            "Maturity Amount":      st.column_config.NumberColumn("Maturity Amount", format="%d", min_value=0),
             "Maturity Date":   st.column_config.TextColumn("Maturity Date", help="DD/MM/YYYY"),
             "CAGR %":          st.column_config.NumberColumn("CAGR %", format="%.2f", min_value=0.0, max_value=50.0, step=0.5, help="Auto-calculated if maturity info provided"),
             "Tag Goals":       st.column_config.TextColumn("Tag Goals", help="Comma-separated goal names"),
-            "SWP ₹/mo":        st.column_config.NumberColumn("SWP ₹/mo", format="%d", min_value=0),
+            "SWP Monthly":        st.column_config.NumberColumn("SWP Monthly", format="%d", min_value=0),
             "SWP Start Yr":    st.column_config.NumberColumn("SWP Start Yr", format="%d", min_value=0, max_value=100),
         }
     )
@@ -1948,16 +2002,16 @@ with tab_assets:
     for _, r in edited_assets.iterrows():
         raw_name = r.get("Asset Name", "")
         name = "" if pd.isna(raw_name) else str(raw_name).strip()
-        raw_val = r.get("Current Value ₹", 0)
+        raw_val = r.get("Current Value", 0)
         val = 0 if pd.isna(raw_val) else int(raw_val)
         if not name and val == 0: continue  # skip ghost/empty rows from data_editor
 
         raw_atype = r.get("Asset Type", "")
         atype = "" if pd.isna(raw_atype) else str(raw_atype).strip()
 
-        raw_inv = r.get("Invested ₹", 0)
+        raw_inv = r.get("Invested", 0)
         inv = 0 if pd.isna(raw_inv) else int(raw_inv)
-        raw_mat = r.get("Maturity ₹", 0)
+        raw_mat = r.get("Maturity Amount", 0)
         mat = 0 if pd.isna(raw_mat) else int(raw_mat)
         raw_pdate = r.get("Purchase Date", "")
         pdate = "" if pd.isna(raw_pdate) else str(raw_pdate).strip()
@@ -1979,7 +2033,7 @@ with tab_assets:
         cls = r.get("Class", "Equity")
         if pd.isna(cls) or cls not in ASSET_CLASSES: cls = "Equity"
 
-        raw_swp = r.get("SWP ₹/mo", 0)
+        raw_swp = r.get("SWP Monthly", 0)
         swp = 0 if pd.isna(raw_swp) else int(raw_swp)
         raw_swpyr = r.get("SWP Start Yr", 0)
         swpyr = 0 if pd.isna(raw_swpyr) else int(raw_swpyr)
@@ -2089,7 +2143,7 @@ with tab_retire:
 
         saved_corpus = st.session_state.get("ret_opening_corpus", 0) or 0
         default_corpus = int(saved_corpus) if saved_corpus > 0 else (int(projected_corpus) if projected_corpus > 0 else 0)
-        opening_corpus = currency_input("Opening Corpus ₹ (at retirement)",
+        opening_corpus = currency_input("Opening Corpus (at retirement)",
             default_corpus,
             key=f"v{_v}_ret_corpus")
 
@@ -2130,7 +2184,7 @@ with tab_retire:
         saved_qw = st.session_state.get("ret_q_withdrawal", 0) or 0
         default_qw = int(saved_qw) if saved_qw > 0 else (int(suggested_qw) if suggested_qw > 0 else 0)
         q_withdrawal = currency_input(
-            "Quarterly Withdrawal ₹ (inflates annually)",
+            "Quarterly Withdrawal (inflates annually)",
             default_qw,
             key=f"v{_v}_ret_qwd")
         if monthly_exp > 0:
