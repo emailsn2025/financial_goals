@@ -1220,19 +1220,21 @@ st.markdown(f"""
     border-radius: 12px;
     display: flex;
     align-items: center;
-    justify-content: space-between;
     margin-bottom: 16px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.3);
 ">
-    <div>
-        <div style="color:#ffffff; font-size:26px; font-weight:700; letter-spacing:-0.5px;">
+    <div style="flex: 0 0 auto;">
+        <div style="color:#ffffff; font-size:26px; font-weight:700; letter-spacing:-0.5px; white-space:nowrap;">
             📊 Net Worth &amp; Goal Planner
         </div>
-        <div style="color:#94a3b8; font-size:13px; margin-top:3px;">
+        <div style="color:#94a3b8; font-size:13px; margin-top:3px; white-space:nowrap;">
             Project your finances · Track goals · Allocate assets
         </div>
     </div>
-    <div style="display:flex; align-items:center; gap:12px;">
+    <div style="flex: 1 1 auto; text-align:center; color:#94a3b8; font-size:12px; font-style:italic; padding:0 12px;">
+        Developed by Sandeep Narang
+    </div>
+    <div style="flex: 0 0 auto; display:flex; align-items:center; gap:12px;">
         {logo_html}
     </div>
 </div>
@@ -2084,37 +2086,68 @@ with tab_goals:
             rows.append(row)
         st.dataframe(rows, width="stretch", hide_index=True)
 
-    # ── Which assets are tagged to which goals ──
-    if st.session_state.assets:
-        st.markdown("### Assets Tagged to Goals")
-        tagged_assets = [a for a in st.session_state.assets if a.get("tagged_goals")]
-        untagged_val  = sum(a.get("value", 0) or 0 for a in st.session_state.assets
-                            if not a.get("tagged_goals"))
+    # ── Which assets are tagged to which goals (manual + auto pool) ──
+    if st.session_state.assets and st.session_state.goals:
+        st.markdown("### Assets → Goals Allocation")
+        st.caption(
+            "Updates automatically whenever you change tags on the Assets tab — "
+            "use the **Tag Goals** column there, then click **Apply Asset Changes**."
+        )
+
+        tagged_assets   = [a for a in st.session_state.assets if a.get("tagged_goals")]
+        untagged_assets = [a for a in st.session_state.assets if not a.get("tagged_goals")]
+        untagged_val    = sum(a.get("value", 0) or 0 for a in untagged_assets)
 
         if tagged_assets:
-            tag_rows = []
-            for a in tagged_assets:
-                tag_rows.append({
-                    "Asset Name":      a.get("name") or "(unnamed)",
-                    "Asset Type":      a.get("asset_type","") or "—",
-                    "Class":           a.get("asset_class",""),
-                    "Today's Value":   fmt_full(a.get("value",0) or 0),
-                    "Tagged Goal(s)":  ", ".join(a.get("tagged_goals") or []),
-                })
+            st.markdown("**Manually Tagged**")
+            tag_rows = [{
+                "Asset Name":      a.get("name") or "(unnamed)",
+                "Asset Type":      a.get("asset_type","") or "—",
+                "Class":           a.get("asset_class",""),
+                "Today's Value":   fmt_full(a.get("value",0) or 0),
+                "Tagged Goal(s)":  ", ".join(a.get("tagged_goals") or []),
+            } for a in tagged_assets]
             st.dataframe(tag_rows, width="stretch", hide_index=True)
-
             tagged_total = sum(a.get("value",0) or 0 for a in tagged_assets)
+            st.caption(f"Manually tagged total: {fmt(tagged_total)}")
+
+        # Auto-allocation: goals still draw from the shared untagged pool via
+        # FIFO ordering (by goal year) even when nothing is explicitly tagged.
+        # This isn't a precise per-asset split — the pool is fungible — but it
+        # shows exactly how much of it each goal is currently using.
+        if untagged_assets:
+            st.markdown("**Auto-Allocated from Untagged Pool** (FIFO by goal year)")
+            alloc = smart_allocation()
+            pool_rows = []
+            for g in alloc:
+                contrib = g.get("untagged_contrib", 0)
+                if contrib > 0:
+                    cost = g.get("display_cost", 0)
+                    pct_from_pool = (contrib / cost * 100) if cost > 0 else 0
+                    pool_rows.append({
+                        "Goal":                      g["name"],
+                        "Allocated from Pool":       fmt(contrib),
+                        "% of Goal Cost from Pool":  f"{pct_from_pool:.0f}%",
+                    })
+            if pool_rows:
+                st.dataframe(pool_rows, width="stretch", hide_index=True)
+            else:
+                st.caption("The untagged pool isn't currently needed to fund any goal.")
+
+            st.markdown("**Assets Currently in the Untagged Pool**")
+            pool_asset_rows = [{
+                "Asset Name":    a.get("name") or "(unnamed)",
+                "Asset Type":    a.get("asset_type","") or "—",
+                "Class":         a.get("asset_class",""),
+                "Today's Value": fmt_full(a.get("value",0) or 0),
+            } for a in untagged_assets]
+            st.dataframe(pool_asset_rows, width="stretch", hide_index=True)
             st.caption(
-                f"Tagged to goals: {fmt(tagged_total)} · "
-                f"Untagged (shared pool, fills any remaining gaps): {fmt(untagged_val)}"
+                f"Untagged pool total: {fmt(untagged_val)} — this pool is shared across "
+                f"all goals in order of their year, filling any gap tagged assets don't cover."
             )
         else:
-            st.info(
-                "No assets are currently tagged to a goal — every asset is in the shared "
-                "untagged pool and gets allocated across goals in order. Go to the Assets "
-                "tab and use the **Tag Goals** column to earmark specific holdings for "
-                "specific goals."
-            )
+            st.success("Every asset is tagged to a goal — no untagged pool remaining.")
 
 # ══════════════════════════════════════════════════════
 # ASSETS
