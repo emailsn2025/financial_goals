@@ -52,19 +52,38 @@ def intl_format(n):
     s = f"{n:,}"
     return ("-" if neg else "") + s
 
+def indian_format(n):
+    """Format a number with Indian comma grouping — lakhs/crores (2-digit groups after the first 3)."""
+    n = int(round(n)); neg = n < 0; n = abs(n); s = str(n)
+    if len(s) <= 3: return ("-" if neg else "") + s
+    last3 = s[-3:]; rest = s[:-3]; parts = []
+    for i, c in enumerate(reversed(rest)):
+        if i > 0 and i % 2 == 0: parts.append(",")
+        parts.append(c)
+    return ("-" if neg else "") + "".join(reversed(parts)) + "," + last3
+
+def _number_format_mode():
+    """Current display mode: 'Western' (Million/Billion) or 'Indian' (Lakh/Crore)."""
+    return st.session_state.get("number_format", "Western")
+
 def fmt(n):
-    """Short display format: Billion / Million abbreviations for large numbers."""
+    """Short display format: Billion/Million (Western) or Crore/Lakh (Indian), per the toggle."""
     n = round(n)
+    if _number_format_mode() == "Indian":
+        if abs(n) >= 1e7: return f"{n/1e7:.2f} Cr"
+        if abs(n) >= 1e5: return f"{n/1e5:.2f} L"
+        return indian_format(n)
     if abs(n) >= 1e9: return f"{n/1e9:.2f} B"
     if abs(n) >= 1e6: return f"{n/1e6:.2f} M"
     return intl_format(n)
 
 def fmt_full(n):
-    """Full number with comma grouping, no abbreviation."""
-    return intl_format(n)
+    """Full number with comma grouping (no abbreviation), per the toggle."""
+    return indian_format(n) if _number_format_mode() == "Indian" else intl_format(n)
 
 def parse_amount(s):
-    """Parse a comma-formatted (or plain) number string back to a value."""
+    """Parse a comma-formatted (or plain) number string back to a value. Works for either
+    grouping style, since both just use commas as separators — stripping commas is enough."""
     if not s or not str(s).strip(): return 0
     c = str(s).replace(",", "").replace(" ", "").strip()
     try: return float(c) if "." in c else int(c)
@@ -74,11 +93,13 @@ def compound(principal, rate_pct, years):
     return _compound_cached(float(principal), float(rate_pct), float(years))
 
 def currency_input(label, value, key, **kwargs):
-    """Text input that displays internationally-formatted numbers (comma grouped)."""
+    """Text input that displays comma-formatted numbers, respecting the number-format toggle."""
     parsed_val = int(round(value)) if value else 0
-    display    = intl_format(parsed_val) if parsed_val else ""
+    indian_mode = _number_format_mode() == "Indian"
+    display = (indian_format(parsed_val) if indian_mode else intl_format(parsed_val)) if parsed_val else ""
+    placeholder = "e.g. 18,00,000" if indian_mode else "e.g. 1,800,000"
     raw = st.text_input(label, value=display, key=key,
-                        placeholder="e.g. 1,800,000", **kwargs)
+                        placeholder=placeholder, **kwargs)
     return parse_amount(raw)
 
 def parse_date(s):
@@ -167,6 +188,7 @@ for key, default in [
     ("ret_annual_return", 8.0), ("ret_tax_class", "Equity"),
     ("ret_custom_tax", 0.0), ("ret_q_withdrawal", 0), ("ret_w_inflation", 6.0),
     ("proj_start_year", THIS_YEAR), ("proj_end_year", THIS_YEAR + 30),
+    ("number_format", "Western"),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -1222,6 +1244,23 @@ feedback below, only your rating and comment text are sent — nothing from your
 </details>
 </div>
 """, unsafe_allow_html=True)
+
+fmt_toggle_cols = st.columns([1, 3])
+with fmt_toggle_cols[0]:
+    fmt_choice = st.radio(
+        "Number Format",
+        options=["Western (1,000,000)", "Indian (10,00,000)"],
+        index=0 if st.session_state.number_format == "Western" else 1,
+        horizontal=False,
+        key=f"v{_v}_number_format_radio",
+    )
+    st.session_state.number_format = "Western" if fmt_choice.startswith("Western") else "Indian"
+with fmt_toggle_cols[1]:
+    st.caption(
+        "Switches comma grouping and magnitude labels across every number in the app — "
+        "**Western**: 1,000,000 · Million/Billion. **Indian**: 10,00,000 · Lakh/Crore. "
+        "This is a display setting only; your entered values don't change."
+    )
 
 with st.expander("💾 Save & Load Your Data", expanded=False):
     st.caption("Your data resets when you close this tab. Download to keep it safe.")
