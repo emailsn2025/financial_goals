@@ -1578,8 +1578,29 @@ with tab_dash:
         zero_cagr_val = sum(a.get("value",0) for a in st.session_state.assets
                             if (a.get("cagr") or 0) == 0)
         recurring_goals = [g for g in goal_projections() if goal_frequency(g) > 0]
-        if zero_cagr_val > 0 or recurring_goals:
+        # A goal spanning multiple years (End > Start) but Frequency=0 is almost
+        # always a data-entry mistake — it silently behaves as a ONE-TIME payment
+        # at the start year, ignoring the whole span, which drastically understates
+        # its true cost. Retirement is the classic case: Start 2027, End 2053, but
+        # if Frequency is left at 0 it only funds a single year's expense.
+        suspect_goals = [g for g in goal_projections()
+                         if goal_frequency(g) == 0 and goal_end_year(g) > goal_start_year(g)]
+        if zero_cagr_val > 0 or recurring_goals or suspect_goals:
             with st.expander("⚠️ Data Quality Warnings — may affect surplus accuracy", expanded=True):
+                if suspect_goals:
+                    for g in suspect_goals:
+                        gname = g.get("name","?") or "(unnamed)"
+                        start_disp = g["start_year"] if g["start_year"] > 1000 else rel_to_cal(goal_start_year(g))
+                        end_disp   = g["end_year"]   if g["end_year"]   > 1000 else rel_to_cal(goal_end_year(g))
+                        st.error(
+                            f"🚨 **\"{gname}\" spans {start_disp}–{end_disp} but Frequency is set to 0 "
+                            f"(one-time).** It's currently being funded as a SINGLE payment in {start_disp} "
+                            f"only — the years in between are being ignored entirely. If this is meant to "
+                            f"recur (e.g. annual retirement expenses, yearly fees), set Frequency to 1 "
+                            f"(or however many years between payments) in the Goals tab and click "
+                            f"**Apply Goal Changes**. If it's genuinely a one-time cost, set End Year "
+                            f"equal to Start Year to clear this warning."
+                        )
                 if zero_cagr_val > 0:
                     st.warning(
                         f"**{fmt(zero_cagr_val)} ({zero_cagr_val/max(total_net_worth(),1)*100:.0f}% of portfolio) "
@@ -1973,6 +1994,17 @@ with tab_goals:
 
     if st.session_state.goals:
         st.markdown("### Projected Goal Costs")
+
+        suspect = [g for g in goal_projections()
+                  if goal_frequency(g) == 0 and goal_end_year(g) > goal_start_year(g)]
+        if suspect:
+            names = ", ".join(g.get("name","?") or "(unnamed)" for g in suspect)
+            st.error(
+                f"🚨 **{names}** — Frequency is 0 (one-time) but End Year is after Start Year. "
+                f"Only the FIRST year is being funded; the rest of the span is ignored. "
+                f"Set Frequency ≥ 1 above if this should recur every year (or every N years)."
+            )
+
         proj = goal_projections(); rows = []
         for g in proj:
             freq = goal_frequency(g)
