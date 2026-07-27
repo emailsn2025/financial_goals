@@ -1735,21 +1735,19 @@ with tab_dash:
             "ts":      datetime.now().isoformat(),
         }
         try:
-            # Google Apps Script Web Apps commonly respond to the first request
-            # with a redirect before actually running the script. requests()
-            # would normally follow that automatically — but for redirects like
-            # 302/303, it can silently switch the follow-up request to GET and
-            # drop the POST body, so the script receives an empty payload and
-            # fails. We disable auto-follow and re-POST the same JSON body
-            # ourselves if a redirect happens, so the data is never lost.
+            # Google Apps Script's flow: the initial POST triggers doPost() and
+            # actually writes the row — that part completes on this first call.
+            # Google then redirects to a separate URL that just serves back the
+            # response content; that redirect target only accepts GET, so the
+            # follow-up request must switch methods (POSTing to it, as we did
+            # before, gets rejected with 405 even though the write succeeded).
             resp = requests.post(FEEDBACK_WEBHOOK_URL, json=feedback_payload,
                                   timeout=8, allow_redirects=False)
             hops = 0
             while resp.status_code in (301, 302, 303, 307, 308) and hops < 5:
                 next_url = resp.headers.get("Location")
                 if not next_url: break
-                resp = requests.post(next_url, json=feedback_payload,
-                                      timeout=8, allow_redirects=False)
+                resp = requests.get(next_url, timeout=8, allow_redirects=False)
                 hops += 1
 
             if resp.status_code == 200:
