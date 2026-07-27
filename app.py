@@ -450,6 +450,56 @@ def smart_allocation():
         })
     return results
 
+def compute_goal_today_values():
+    """
+    Per-goal 'Allocated from Current Corpus' figures, in today's money — the SAME
+    FIFO + discounting math the Dashboard's Goal Summary table uses, extracted here
+    so any other view (e.g. an asset-level breakdown) shows figures that always
+    match the Dashboard exactly, with no risk of the two drifting apart.
+
+    Returns: {goal_name: {"cost", "allocated_today", "pct", "tagged": [asset dicts],
+                           "uses_untagged_pool": bool}}
+    """
+    alloc_map = {g["name"]: g for g in smart_allocation()}
+    ai        = avg_inflation()
+    wcagr_pct = weighted_cagr()
+    wcagr     = wcagr_pct / 100
+    projs     = goal_projections()
+
+    remaining, prev_start = None, 0
+    result = {}
+    for g in projs:
+        yr    = goal_start_year(g)
+        gname = g.get("name", "") or "(unnamed)"
+        entry = alloc_map.get(gname, {})
+        cost  = entry.get("display_cost",
+                goal_value_at_start(g, wcagr_pct) if goal_uses_cumulative(g) else g.get("inflated_cost", 0))
+
+        if remaining is None:
+            pool = sum(asset_value_at_year(a, yr, ai) for a in st.session_state.assets)
+        else:
+            gap  = yr - prev_start
+            pool = remaining * compound(1, wcagr_pct, gap) if gap > 0 and wcagr_pct > 0 else remaining
+
+        allocated_future = min(pool, cost)
+        allocated_today  = allocated_future / ((1 + wcagr) ** yr) if wcagr > 0 and yr > 0 else allocated_future
+
+        tagged = [a for a in st.session_state.assets
+                  if gname and gname in (a.get("tagged_goals") or [])]
+
+        result[gname] = {
+            "cost":               cost,
+            "allocated_today":    allocated_today,
+            "pct":                entry.get("pct", 0),
+            "tagged":             tagged,
+            "uses_untagged_pool": entry.get("untagged_contrib", 0) > 0,
+        }
+
+        remaining  = max(pool - cost, 0)
+        prev_start = yr
+
+    return result
+
 def expense_coverage_years():
     if not st.session_state.income or not st.session_state.expenses: return None
     for y in range(1, 51):
@@ -2086,56 +2136,46 @@ with tab_goals:
             rows.append(row)
         st.dataframe(rows, width="stretch", hide_index=True)
 
-    # ── Which assets fund which goal, in one clear view ──
+    # ── What assets make up the "Allocated from Current Corpus" figure per goal ──
     if st.session_state.assets and st.session_state.goals:
-        st.markdown("### Assets → Goals Allocation")
+        st.markdown("### Corpus Composition by Goal")
         st.caption(
-            "For each goal: which assets are tagged to it, plus how much of the shared "
-            "(untagged) asset pool is being drawn in to help fund it. Updates automatically "
-            "when you change tags on the Assets tab — click **Apply Asset Changes** there."
+            "For each goal, the specific asset holdings behind its 'Allocated from Current "
+            "Corpus' figure (same today's-money number shown on the Dashboard). Untagged "
+            "assets are shared across every goal that draws from the pool, so the same "
+            "holding can legitimately appear under more than one goal — tag an asset on the "
+            "Assets tab to earmark it for one goal specifically instead."
         )
-        alloc = smart_allocation()
-        alloc_rows = []
-        tot_tagged = tot_pool = tot_allocated = tot_cost = 0.0
-        for g in alloc:
-            tagged_names = g.get("tagged_assets") or []
-            tagged_contrib = g.get("tagged_contrib", 0)
-            pool_contrib   = g.get("untagged_contrib", 0)
-            allocated      = g.get("allocated", 0)
-            cost           = g.get("display_cost", 0)
-            alloc_rows.append({
-                "Goal":                g["name"] or "(unnamed)",
-                "Tagged Asset(s)":     ", ".join(tagged_names) if tagged_names else "—",
-                "From Tagged Assets":  fmt(tagged_contrib),
-                "From Shared Pool":    fmt(pool_contrib),
-                "Total Allocated":     fmt(allocated),
-                "Goal Cost":           fmt(cost),
-                "% Met":               f"{g.get('pct',0)}%",
-            })
-            tot_tagged    += tagged_contrib
-            tot_pool      += pool_contrib
-            tot_allocated += allocated
-            tot_cost      += cost
 
-        overall_pct = round((tot_allocated / tot_cost) * 100) if tot_cost > 0 else 0
-        alloc_rows.append({
-            "Goal":                "TOTAL",
-            "Tagged Asset(s)":     "",
-            "From Tagged Assets":  fmt(tot_tagged),
-            "From Shared Pool":    fmt(tot_pool),
-            "Total Allocated":     fmt(tot_allocated),
-            "Goal Cost":           fmt(tot_cost),
-            "% Met":               f"{overall_pct}%",
-        })
-        st.dataframe(alloc_rows, width="stretch", hide_index=True)
+        today_vals      = compute_goal_today_values()
+        untagged_assets = [a for a in st.session_state.assets if not a.get("tagged_goals")]
 
-        untagged_val = sum(a.get("value",0) or 0 for a in st.session_state.assets
-                           if not a.get("tagged_goals"))
-        st.caption(
-            f"'Shared Pool' is every untagged asset (currently {fmt(untagged_val)} total), "
-            f"split across goals in order of their year — tag an asset on the Assets tab to "
-            f"earmark it for one goal specifically instead."
-        )
+        comp_rows = []
+        for gname, info in today_vals.items():
+            contributing = list(info["tagged"])
+            if info["uses_untagged_pool"]:
+                contributing += untagged_assets
+
+            if not contributing:
+                comp_rows.append({
+                    "Goal":                          gname,
+                    "Allocated from Current Corpus": fmt(info["allocated_today"]),
+                    "Asset Name":                     "— none —",
+                    "Asset Type":                     "",
+                    "Asset Class":                    "",
+                    "% Funded":                       f"{info['pct']}%",
+                })
+            else:
+                for a in contributing:
+                    comp_rows.append({
+                        "Goal":                          gname,
+                        "Allocated from Current Corpus": fmt(info["allocated_today"]),
+                        "Asset Name":                     a.get("name") or "(unnamed)",
+                        "Asset Type":                     a.get("asset_type","") or "—",
+                        "Asset Class":                    a.get("asset_class",""),
+                        "% Funded":                       f"{info['pct']}%",
+                    })
+        st.dataframe(comp_rows, width="stretch", hide_index=True)
 
 # ══════════════════════════════════════════════════════
 # ASSETS
