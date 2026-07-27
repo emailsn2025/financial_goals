@@ -1735,13 +1735,33 @@ with tab_dash:
             "ts":      datetime.now().isoformat(),
         }
         try:
-            resp = requests.post(FEEDBACK_WEBHOOK_URL, json=feedback_payload, timeout=5)
+            # Google Apps Script Web Apps commonly respond to the first request
+            # with a redirect before actually running the script. requests()
+            # would normally follow that automatically — but for redirects like
+            # 302/303, it can silently switch the follow-up request to GET and
+            # drop the POST body, so the script receives an empty payload and
+            # fails. We disable auto-follow and re-POST the same JSON body
+            # ourselves if a redirect happens, so the data is never lost.
+            resp = requests.post(FEEDBACK_WEBHOOK_URL, json=feedback_payload,
+                                  timeout=8, allow_redirects=False)
+            hops = 0
+            while resp.status_code in (301, 302, 303, 307, 308) and hops < 5:
+                next_url = resp.headers.get("Location")
+                if not next_url: break
+                resp = requests.post(next_url, json=feedback_payload,
+                                      timeout=8, allow_redirects=False)
+                hops += 1
+
             if resp.status_code == 200:
                 st.success("Thanks for the feedback!")
             else:
                 st.warning("Feedback saved locally, but the server didn't confirm receipt. Please try again.")
-        except Exception:
+                with st.expander("Debug details", expanded=False):
+                    st.code(f"Status: {resp.status_code}\nResponse: {resp.text[:500]}")
+        except Exception as e:
             st.warning("Couldn't reach the feedback server right now — please try again in a moment.")
+            with st.expander("Debug details", expanded=False):
+                st.code(str(e))
         st.session_state.setdefault("_feedback_log", []).append(feedback_payload)
 
 # ══════════════════════════════════════════════════════
