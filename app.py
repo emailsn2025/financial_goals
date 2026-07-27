@@ -444,7 +444,7 @@ def get_recommendations():
             recs.append(("⚠️","Inflation Warning",
                 f'"{a["name"]}" returns {a["cagr"]}% — below avg inflation {ai:.1f}%.'))
 
-    if any(g.get("start_year",1)<=3 for g in st.session_state.goals) and \
+    if any(goal_start_year(g)<=3 for g in st.session_state.goals) and \
        any(a["asset_class"]=="Equity" for a in st.session_state.assets):
         recs.append(("🔄","Horizon Matching",
             "Goals within 3 years detected. Consider shifting equity into debt for capital protection."))
@@ -706,7 +706,7 @@ def expense_income_chart():
 
 def asset_chart():
     ai    = avg_inflation()
-    max_y = max(st.session_state.projection_years, max((g.get("end_year", g.get("start_year",1)) for g in st.session_state.goals), default=30))
+    max_y = max(st.session_state.projection_years, max((goal_end_year(g) for g in st.session_state.goals), default=30))
     years = list(range(max_y+1))
     fig   = go.Figure(); totals=[0.0]*len(years)
     for i, a in enumerate(st.session_state.assets):
@@ -757,7 +757,7 @@ def asset_type_pie_chart():
     return fig
 
 def nw_bar_chart():
-    max_y = max(30, max((g.get("end_year", g.get("start_year",1)) for g in st.session_state.goals), default=30))
+    max_y = max(30, max((goal_end_year(g) for g in st.session_state.goals), default=30))
     years = list(range(0, max_y+1, 5))
     vals  = [portfolio_at_year(y) for y in years]
     fig   = go.Figure(go.Bar(x=[f"Yr {y}" for y in years], y=vals,
@@ -1424,8 +1424,12 @@ with tab_dash:
             st.progress(min(g["pct"],100)/100)
 
     if st.session_state.assets:
-        pie = allocation_pie_chart()
-        if pie: st.plotly_chart(pie, width="stretch")
+        cl, cr = st.columns(2)
+        with cl:
+            st.plotly_chart(nw_bar_chart(), width="stretch")
+        with cr:
+            pie = allocation_pie_chart()
+            if pie: st.plotly_chart(pie, width="stretch")
         mc1,mc2,mc3 = st.columns(3)
         mc1.metric("Weighted CAGR",     f"{weighted_cagr():.1f}%")
         mc2.metric("Risk Profile",      risk_profile())
