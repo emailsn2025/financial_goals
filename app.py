@@ -3,6 +3,7 @@ import streamlit.components.v1 as components
 import plotly.graph_objects as go
 import json
 import pandas as pd
+import requests
 from datetime import date, datetime
 import base64
 import os
@@ -1707,6 +1708,8 @@ with tab_dash:
             )
 
     # ── Feedback ──
+    FEEDBACK_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbwSEyeDApgHgM71xmef4tryXR9M-jP2Hi9njW8QB_mbBKnWnA4NSE_DJSvU7caAQOTX/exec"
+
     st.markdown("---")
     st.markdown("### 💬 Feedback")
     st.caption("Found this useful? Let us know, or tell us what's missing.")
@@ -1731,13 +1734,15 @@ with tab_dash:
             "comment": fb_text,
             "ts":      datetime.now().isoformat(),
         }
-        # NOTE: This capture is session-local only — nothing is sent anywhere by default.
-        # To collect feedback across all users, POST feedback_payload to a webhook, e.g. a
-        # Google Apps Script Web App connected to a Google Sheet (free, no backend needed):
-        #   import requests
-        #   requests.post("https://script.google.com/macros/s/XXXX/exec", json=feedback_payload)
+        try:
+            resp = requests.post(FEEDBACK_WEBHOOK_URL, json=feedback_payload, timeout=5)
+            if resp.status_code == 200:
+                st.success("Thanks for the feedback!")
+            else:
+                st.warning("Feedback saved locally, but the server didn't confirm receipt. Please try again.")
+        except Exception:
+            st.warning("Couldn't reach the feedback server right now — please try again in a moment.")
         st.session_state.setdefault("_feedback_log", []).append(feedback_payload)
-        st.success("Thanks for the feedback!")
 
 # ══════════════════════════════════════════════════════
 # INCOME & EXPENSES
