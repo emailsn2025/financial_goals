@@ -485,11 +485,11 @@ def import_goals_from_excel(uploaded_file):
         df.columns = [c.strip().lower() for c in df.columns]
         col_map = {
             "name":        ["goal name","name","goal"],
-            "current_cost":["today's cost","cost","amount","current cost"],
+            "current_cost":["cost today","today's cost","cost","amount","current cost"],
             "inflation":   ["inflation %","inflation","inflation rate"],
             "start_year":  ["start year","start","from year","target year","year"],
             "end_year":    ["end year","end","to year","until year"],
-            "frequency":   ["frequency (years)","frequency","freq","every n years","recurrence"],
+            "frequency":   ["frequency (yrs)","frequency (years)","frequency","freq","every n years","recurrence"],
             "cumulative":  ["cumulative","cum"],
         }
         def find_col(df, options):
@@ -1915,8 +1915,8 @@ with tab_goals:
     # Excel import
     with st.expander("📥 Import Goals from Excel", expanded=False):
         st.caption(
-            "Upload an .xlsx file with columns: Goal Name, Today's Cost, Inflation %, "
-            "Start Year, End Year, Frequency (years), Cumulative"
+            "Upload an .xlsx file with columns: Goal Name, Cost Today, Inflation %, "
+            "Start Year, End Year, Frequency (yrs), Cumulative"
         )
         goal_file = st.file_uploader("Upload Goals Excel", type=["xlsx","xls"], key=f"v{_v}_goal_upload")
         if goal_file:
