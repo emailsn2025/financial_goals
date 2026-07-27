@@ -1231,7 +1231,7 @@ st.markdown(f"""
             Project your finances · Track goals · Allocate assets
         </div>
     </div>
-    <div style="flex: 1 1 auto; text-align:center; color:#94a3b8; font-size:12px; font-style:italic; padding:0 12px;">
+    <div style="flex: 1 1 auto; text-align:center; color:#94a3b8; font-size:26px; font-style:italic; padding:0 12px;">
         Developed by Sandeep Narang
     </div>
     <div style="flex: 0 0 auto; display:flex; align-items:center; gap:12px;">
