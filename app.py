@@ -2084,6 +2084,38 @@ with tab_goals:
             rows.append(row)
         st.dataframe(rows, width="stretch", hide_index=True)
 
+    # ── Which assets are tagged to which goals ──
+    if st.session_state.assets:
+        st.markdown("### Assets Tagged to Goals")
+        tagged_assets = [a for a in st.session_state.assets if a.get("tagged_goals")]
+        untagged_val  = sum(a.get("value", 0) or 0 for a in st.session_state.assets
+                            if not a.get("tagged_goals"))
+
+        if tagged_assets:
+            tag_rows = []
+            for a in tagged_assets:
+                tag_rows.append({
+                    "Asset Name":      a.get("name") or "(unnamed)",
+                    "Asset Type":      a.get("asset_type","") or "—",
+                    "Class":           a.get("asset_class",""),
+                    "Today's Value":   fmt_full(a.get("value",0) or 0),
+                    "Tagged Goal(s)":  ", ".join(a.get("tagged_goals") or []),
+                })
+            st.dataframe(tag_rows, width="stretch", hide_index=True)
+
+            tagged_total = sum(a.get("value",0) or 0 for a in tagged_assets)
+            st.caption(
+                f"Tagged to goals: {fmt(tagged_total)} · "
+                f"Untagged (shared pool, fills any remaining gaps): {fmt(untagged_val)}"
+            )
+        else:
+            st.info(
+                "No assets are currently tagged to a goal — every asset is in the shared "
+                "untagged pool and gets allocated across goals in order. Go to the Assets "
+                "tab and use the **Tag Goals** column to earmark specific holdings for "
+                "specific goals."
+            )
+
 # ══════════════════════════════════════════════════════
 # ASSETS
 # ══════════════════════════════════════════════════════
