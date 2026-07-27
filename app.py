@@ -178,12 +178,33 @@ def _compound_cached(principal, rate_pct, years):
 # ASSET VALUE WITH SWP  (thin wrapper → cached pure fn)
 # ══════════════════════════════════════════════════════
 
+def asset_swp_start_rel(a):
+    """
+    Convert an asset's SWP start (stored as a calendar year, e.g. 2030) into
+    years-from-now for the simulation loop. 0/blank means 'not set' — SWP is
+    controlled by swp_monthly being 0 in that case, so treat as starting now.
+    Also accepts legacy relative-year data (small numbers) for backward compatibility.
+    """
+    raw = int(a.get("swp_start_year", 0) or 0)
+    if raw <= 0:
+        return 0
+    if raw > 1000:  # calendar year
+        return cal_to_rel(raw)
+    return raw  # legacy relative-year data
+
+def asset_swp_start_display(a):
+    """Calendar year to show in the SWP Start Yr field, whatever format is stored."""
+    raw = int(a.get("swp_start_year", 0) or 0)
+    if raw > 1000: return raw          # already a calendar year
+    if raw > 0: return rel_to_cal(raw) # legacy relative-year data
+    return THIS_YEAR                   # unset — sensible default
+
 def asset_value_at_year(a, target_year, avg_inf=6.0):
     return _asset_value_at_year_cached(
         value         = float(a.get("value", 0) or 0),
         cagr          = float(a.get("cagr", 0) or 0),
         swp_monthly   = float(a.get("swp_monthly", 0) or 0),
-        swp_start_year= int(a.get("swp_start_year", 0) or 0),
+        swp_start_year= asset_swp_start_rel(a),
         target_year   = int(target_year),
         avg_inf       = float(avg_inf),
     )
@@ -489,9 +510,9 @@ def import_goals_from_excel(uploaded_file):
                     elif field == "inflation":
                         g[field] = float(str(val).replace("%","").strip() or 6)
                     elif field in ("start_year","end_year"):
-                        raw_yr = int(float(str(val).strip() or 1))
-                        if raw_yr > 100: raw_yr = max(raw_yr - TODAY.year, 1)
-                        g[field] = min(max(raw_yr, 1), 100)
+                        raw_yr = int(float(str(val).strip() or THIS_YEAR))
+                        if raw_yr <= 1000: raw_yr = THIS_YEAR + raw_yr
+                        g[field] = max(2000, min(raw_yr, 2100))
                     elif field == "frequency":
                         g[field] = int(float(str(val).strip() or 0))
                     elif field == "cumulative":
@@ -548,7 +569,9 @@ def import_assets_from_excel(uploaded_file):
                     elif field == "cagr":
                         a[field] = float(str(val).replace("%","").strip() or 0)
                     elif field == "swp_start_year":
-                        a[field] = int(float(str(val).strip() or 0))
+                        raw_yr = int(float(str(val).strip() or 0))
+                        if 0 < raw_yr <= 1000: raw_yr = THIS_YEAR + raw_yr
+                        a[field] = max(0, min(raw_yr, 2100)) if raw_yr > 0 else 0
                     elif field == "asset_class":
                         cls = str(val).strip()
                         a[field] = cls if cls in ASSET_CLASSES else "Equity"
@@ -690,9 +713,9 @@ def asset_chart():
         vals = [asset_value_at_year(a, y, ai) for y in years]
         for j,v in enumerate(vals): totals[j]+=v
         swp_amt = a.get("swp_monthly",0) or 0
-        swp_yr  = a.get("swp_start_year",0) or 0
+        swp_yr  = asset_swp_start_display(a)
         name    = a["name"] or f"Asset {i+1}"
-        label   = f"{name} (SWP {fmt(swp_amt)}/mo Yr{swp_yr}+)" if swp_amt else name
+        label   = f"{name} (SWP {fmt(swp_amt)}/mo from {swp_yr})" if swp_amt else name
         fig.add_trace(go.Scatter(x=years, y=vals, name=label,
             line=dict(color=LINE_COLORS[i%len(LINE_COLORS)], width=2),
             hovertemplate="%{y:,.0f}<extra>%{fullData.name}</extra>"))
@@ -1051,7 +1074,7 @@ def generate_full_pdf_report():
         rows = []
         for a in st.session_state.assets:
             tags = ", ".join(a.get("tagged_goals") or []) or "—"
-            swp  = f'{fmt(a.get("swp_monthly",0) or 0)}/mo Yr{a.get("swp_start_year",0) or 0}+' \
+            swp  = f'{fmt(a.get("swp_monthly",0) or 0)}/mo from {asset_swp_start_display(a)}' \
                    if (a.get("swp_monthly") or 0) > 0 else "—"
             rows.append([
                 a["name"] or "—", a.get("asset_type","") or "—", a["asset_class"], fmt_full(a["value"]), f'{a["cagr"]:.2f}%',
@@ -1715,26 +1738,28 @@ with tab_inc_exp:
             "End Year":    st.column_config.NumberColumn("End Year", format="%d", min_value=2000, max_value=2100, step=1),
         }
     )
+    st.caption("Edits above are staged in the table — nothing recalculates until you click Apply.")
+    apply_inc = st.button("✅ Apply Income Changes", key=f"v{_v}_apply_inc", type="primary", use_container_width=True)
 
-    # Sync back to session state
-    new_inc_state = []
-    for _, r in edited_inc.iterrows():
-        raw_name = r.get("Source", "")
-        name = "" if pd.isna(raw_name) else str(raw_name).strip()
-        raw_monthly = r.get("Monthly", 0)
-        monthly = 0 if pd.isna(raw_monthly) else int(parse_amount(str(raw_monthly)))
-        if not name and monthly == 0: continue  # skip ghost/empty rows
-        new_inc_state.append({
-            "name":       name,
-            "monthly":    monthly,
-            "growth":     float(safe_cell(r, "Growth %/yr", 5.0)),
-            "start_year": int(safe_cell(r, "Start Year", THIS_YEAR)),
-            "end_year":   int(safe_cell(r, "End Year", THIS_YEAR + 30)),
-        })
-    # Only update if genuinely different — no cache clear needed, cache keys
-    # naturally differ when values differ (correctness doesn't require clearing)
-    if json.dumps(new_inc_state, sort_keys=True) != json.dumps(st.session_state.income, sort_keys=True):
+    # Sync back to session state — only when Apply is clicked, so typing across
+    # many rows doesn't trigger a full-app recalculation on every keystroke.
+    if apply_inc:
+        new_inc_state = []
+        for _, r in edited_inc.iterrows():
+            raw_name = r.get("Source", "")
+            name = "" if pd.isna(raw_name) else str(raw_name).strip()
+            raw_monthly = r.get("Monthly", 0)
+            monthly = 0 if pd.isna(raw_monthly) else int(parse_amount(str(raw_monthly)))
+            if not name and monthly == 0: continue  # skip ghost/empty rows
+            new_inc_state.append({
+                "name":       name,
+                "monthly":    monthly,
+                "growth":     float(safe_cell(r, "Growth %/yr", 5.0)),
+                "start_year": int(safe_cell(r, "Start Year", THIS_YEAR)),
+                "end_year":   int(safe_cell(r, "End Year", THIS_YEAR + 30)),
+            })
         st.session_state.income = new_inc_state
+        st.success(f"✓ Applied — {len(new_inc_state)} income source(s) updated")
 
     st.divider()
     st.markdown("### 💸 Monthly Expenses")
@@ -1787,24 +1812,27 @@ with tab_inc_exp:
             "Cumulative":  st.column_config.CheckboxColumn("Cumulative"),
         }
     )
+    st.caption("Edits above are staged in the table — nothing recalculates until you click Apply.")
+    apply_exp = st.button("✅ Apply Expense Changes", key=f"v{_v}_apply_exp", type="primary", use_container_width=True)
 
-    new_exp_state = []
-    for _, r in edited_exp.iterrows():
-        raw_name = r.get("Name", "")
-        name = "" if pd.isna(raw_name) else str(raw_name).strip()
-        raw_monthly = r.get("Monthly", 0)
-        monthly = 0 if pd.isna(raw_monthly) else int(parse_amount(str(raw_monthly)))
-        if not name and monthly == 0: continue
-        new_exp_state.append({
-            "name":       name,
-            "monthly":    monthly,
-            "inflation":  float(safe_cell(r, "Inflation %", 6.0)),
-            "start_year": int(safe_cell(r, "Start Year", THIS_YEAR)),
-            "end_year":   int(safe_cell(r, "End Year", THIS_YEAR + 30)),
-            "cumulative": bool(safe_cell(r, "Cumulative", False)),
-        })
-    if json.dumps(new_exp_state, sort_keys=True) != json.dumps(st.session_state.expenses, sort_keys=True):
+    if apply_exp:
+        new_exp_state = []
+        for _, r in edited_exp.iterrows():
+            raw_name = r.get("Name", "")
+            name = "" if pd.isna(raw_name) else str(raw_name).strip()
+            raw_monthly = r.get("Monthly", 0)
+            monthly = 0 if pd.isna(raw_monthly) else int(parse_amount(str(raw_monthly)))
+            if not name and monthly == 0: continue
+            new_exp_state.append({
+                "name":       name,
+                "monthly":    monthly,
+                "inflation":  float(safe_cell(r, "Inflation %", 6.0)),
+                "start_year": int(safe_cell(r, "Start Year", THIS_YEAR)),
+                "end_year":   int(safe_cell(r, "End Year", THIS_YEAR + 30)),
+                "cumulative": bool(safe_cell(r, "Cumulative", False)),
+            })
         st.session_state.expenses = new_exp_state
+        st.success(f"✓ Applied — {len(new_exp_state)} expense(s) updated")
 
     st.divider()
     # Projection horizon as calendar years
@@ -1917,28 +1945,31 @@ with tab_goals:
             "Cumulative":      st.column_config.CheckboxColumn("Cumulative", help="Sum all occurrences into one total"),
         }
     )
+    st.caption("Edits above are staged in the table — nothing recalculates until you click Apply.")
+    apply_goals = st.button("✅ Apply Goal Changes", key=f"v{_v}_apply_goals", type="primary", use_container_width=True)
 
-    new_goals_state = []
-    for _, r in edited_goals.iterrows():
-        raw_name = r.get("Goal Name", "")
-        name = "" if pd.isna(raw_name) else str(raw_name).strip()
-        raw_cost = r.get("Cost Today", 0)
-        cost = 0 if pd.isna(raw_cost) else int(parse_amount(str(raw_cost)))
-        if not name and cost == 0: continue
-        sy = int(safe_cell(r, "Start Year", THIS_YEAR + 5))
-        ey = int(safe_cell(r, "End Year", sy))
-        if ey < sy: ey = sy
-        new_goals_state.append({
-            "name":         name,
-            "current_cost": cost,
-            "inflation":    float(safe_cell(r, "Inflation %", 6.0)),
-            "start_year":   sy,
-            "end_year":     ey,
-            "frequency":    int(safe_cell(r, "Frequency (yrs)", 0)),
-            "cumulative":   bool(safe_cell(r, "Cumulative", False)),
-        })
-    if json.dumps(new_goals_state, sort_keys=True) != json.dumps(st.session_state.goals, sort_keys=True):
+    if apply_goals:
+        new_goals_state = []
+        for _, r in edited_goals.iterrows():
+            raw_name = r.get("Goal Name", "")
+            name = "" if pd.isna(raw_name) else str(raw_name).strip()
+            raw_cost = r.get("Cost Today", 0)
+            cost = 0 if pd.isna(raw_cost) else int(parse_amount(str(raw_cost)))
+            if not name and cost == 0: continue
+            sy = int(safe_cell(r, "Start Year", THIS_YEAR + 5))
+            ey = int(safe_cell(r, "End Year", sy))
+            if ey < sy: ey = sy
+            new_goals_state.append({
+                "name":         name,
+                "current_cost": cost,
+                "inflation":    float(safe_cell(r, "Inflation %", 6.0)),
+                "start_year":   sy,
+                "end_year":     ey,
+                "frequency":    int(safe_cell(r, "Frequency (yrs)", 0)),
+                "cumulative":   bool(safe_cell(r, "Cumulative", False)),
+            })
         st.session_state.goals = new_goals_state
+        st.success(f"✓ Applied — {len(new_goals_state)} goal(s) updated")
 
     if st.session_state.goals:
         st.markdown("### Projected Goal Costs")
@@ -2016,7 +2047,7 @@ with tab_assets:
         "CAGR %":           float(a.get("cagr", 0.0) or 0.0),
         "Tag Goals":        ", ".join(a.get("tagged_goals") or []),
         "SWP Monthly":      fmt_full(a.get("swp_monthly", 0) or 0),
-        "SWP Start Yr":     int(a.get("swp_start_year", 0) or 0),
+        "SWP Start Yr":     asset_swp_start_display(a),
     } for a in st.session_state.assets])
 
     if assets_df.empty:
@@ -2043,75 +2074,76 @@ with tab_assets:
             "CAGR %":          st.column_config.NumberColumn("CAGR %", format="%.2f", min_value=0.0, max_value=50.0, step=0.5, help="Auto-calculated if maturity info provided"),
             "Tag Goals":       st.column_config.TextColumn("Tag Goals", help="Comma-separated goal names"),
             "SWP Monthly":     st.column_config.TextColumn("SWP Monthly", help="e.g. 1,800,000"),
-            "SWP Start Yr":    st.column_config.NumberColumn("SWP Start Yr", format="%d", min_value=0, max_value=100),
+            "SWP Start Yr":    st.column_config.NumberColumn("SWP Start Yr", format="%d", min_value=2000, max_value=2100, help="Calendar year, e.g. 2030"),
         }
     )
+    st.caption("Edits above are staged in the table — nothing recalculates until you click Apply.")
+    apply_assets = st.button("✅ Apply Asset Changes", key=f"v{_v}_apply_assets", type="primary", use_container_width=True)
 
-    # Sync back to session state
-    new_assets_state = []
-    for _, r in edited_assets.iterrows():
-        raw_name = r.get("Asset Name", "")
-        name = "" if pd.isna(raw_name) else str(raw_name).strip()
-        raw_val = r.get("Current Value", 0)
-        val = 0 if pd.isna(raw_val) else int(parse_amount(str(raw_val)))
-        if not name and val == 0: continue  # skip ghost/empty rows from data_editor
+    if apply_assets:
+        new_assets_state = []
+        for _, r in edited_assets.iterrows():
+            raw_name = r.get("Asset Name", "")
+            name = "" if pd.isna(raw_name) else str(raw_name).strip()
+            raw_val = r.get("Current Value", 0)
+            val = 0 if pd.isna(raw_val) else int(parse_amount(str(raw_val)))
+            if not name and val == 0: continue  # skip ghost/empty rows from data_editor
 
-        raw_atype = r.get("Asset Type", "")
-        atype = "" if pd.isna(raw_atype) else str(raw_atype).strip()
+            raw_atype = r.get("Asset Type", "")
+            atype = "" if pd.isna(raw_atype) else str(raw_atype).strip()
 
-        raw_inv = r.get("Invested", 0)
-        inv = 0 if pd.isna(raw_inv) else int(parse_amount(str(raw_inv)))
-        raw_mat = r.get("Maturity Amount", 0)
-        mat = 0 if pd.isna(raw_mat) else int(parse_amount(str(raw_mat)))
-        raw_pdate = r.get("Purchase Date", "")
-        pdate = "" if pd.isna(raw_pdate) else str(raw_pdate).strip()
-        raw_mdate = r.get("Maturity Date", "")
-        mdate = "" if pd.isna(raw_mdate) else str(raw_mdate).strip()
-        raw_cagr = r.get("CAGR %", 0.0)
-        manual_cagr = 0.0 if pd.isna(raw_cagr) else float(raw_cagr)
+            raw_inv = r.get("Invested", 0)
+            inv = 0 if pd.isna(raw_inv) else int(parse_amount(str(raw_inv)))
+            raw_mat = r.get("Maturity Amount", 0)
+            mat = 0 if pd.isna(raw_mat) else int(parse_amount(str(raw_mat)))
+            raw_pdate = r.get("Purchase Date", "")
+            pdate = "" if pd.isna(raw_pdate) else str(raw_pdate).strip()
+            raw_mdate = r.get("Maturity Date", "")
+            mdate = "" if pd.isna(raw_mdate) else str(raw_mdate).strip()
+            raw_cagr = r.get("CAGR %", 0.0)
+            manual_cagr = 0.0 if pd.isna(raw_cagr) else float(raw_cagr)
 
-        if mat > 0 and inv > 0 and mdate:
-            auto = round(calc_asset_cagr(inv, mat, pdate or str(TODAY), mdate), 2)
-            cagr = auto if auto > 0 else manual_cagr
-        else:
-            cagr = manual_cagr
+            if mat > 0 and inv > 0 and mdate:
+                auto = round(calc_asset_cagr(inv, mat, pdate or str(TODAY), mdate), 2)
+                cagr = auto if auto > 0 else manual_cagr
+            else:
+                cagr = manual_cagr
 
-        raw_tags = r.get("Tag Goals", "")
-        tags_raw = "" if pd.isna(raw_tags) else str(raw_tags).strip()
-        tags = [t.strip() for t in tags_raw.split(",") if t.strip() and t.strip() in gnames]
+            raw_tags = r.get("Tag Goals", "")
+            tags_raw = "" if pd.isna(raw_tags) else str(raw_tags).strip()
+            tags = [t.strip() for t in tags_raw.split(",") if t.strip() and t.strip() in gnames]
 
-        cls = r.get("Class", "Equity")
-        if pd.isna(cls) or cls not in ASSET_CLASSES: cls = "Equity"
+            cls = r.get("Class", "Equity")
+            if pd.isna(cls) or cls not in ASSET_CLASSES: cls = "Equity"
 
-        raw_swp = r.get("SWP Monthly", 0)
-        swp = 0 if pd.isna(raw_swp) else int(parse_amount(str(raw_swp)))
-        raw_swpyr = r.get("SWP Start Yr", 0)
-        swpyr = 0 if pd.isna(raw_swpyr) else int(raw_swpyr)
+            raw_swp = r.get("SWP Monthly", 0)
+            swp = 0 if pd.isna(raw_swp) else int(parse_amount(str(raw_swp)))
+            swpyr = int(safe_cell(r, "SWP Start Yr", THIS_YEAR))
 
-        new_assets_state.append({
-            "name":           name,
-            "asset_type":     atype,
-            "asset_class":    cls,
-            "purchase_date":  pdate,
-            "invested":       inv,
-            "value":          val,
-            "maturity_amt":   mat,
-            "maturity_date":  mdate,
-            "cagr":           cagr,
-            "tagged_goals":   tags,
-            "swp_monthly":    swp,
-            "swp_start_year": swpyr,
-        })
+            new_assets_state.append({
+                "name":           name,
+                "asset_type":     atype,
+                "asset_class":    cls,
+                "purchase_date":  pdate,
+                "invested":       inv,
+                "value":          val,
+                "maturity_amt":   mat,
+                "maturity_date":  mdate,
+                "cagr":           cagr,
+                "tagged_goals":   tags,
+                "swp_monthly":    swp,
+                "swp_start_year": swpyr,
+            })
 
-    if json.dumps(new_assets_state, sort_keys=True) != json.dumps(st.session_state.assets, sort_keys=True):
         st.session_state.assets = new_assets_state
+        st.success(f"✓ Applied — {len(new_assets_state)} asset(s) updated")
 
     if st.session_state.assets:
         with st.expander(f"📊 Asset Summary Table ({len(st.session_state.assets)} assets) — click to expand", expanded=False):
             ai = avg_inflation(); rows=[]
             for a in st.session_state.assets:
                 tags   = ", ".join(a.get("tagged_goals") or []) or "—"
-                swp    = f'{fmt(a.get("swp_monthly",0) or 0)}/mo Yr{a.get("swp_start_year",0) or 0}+' \
+                swp    = f'{fmt(a.get("swp_monthly",0) or 0)}/mo from {asset_swp_start_display(a)}' \
                          if (a.get("swp_monthly") or 0) > 0 else "—"
                 inv    = a.get("invested",0) or 0
                 mat    = a.get("maturity_amt",0) or 0
