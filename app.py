@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import plotly.graph_objects as go
 import json
 import pandas as pd
@@ -14,6 +15,37 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.enums import TA_LEFT
 
 st.set_page_config(page_title="Net Worth & Goal Planner", page_icon="📊", layout="wide")
+
+# ══════════════════════════════════════════════════════
+# GOOGLE ANALYTICS (GA4)
+# ══════════════════════════════════════════════════════
+# Streamlit renders custom components inside a sandboxed iframe, so a plain
+# <script> tag here would only track pageviews for that tiny iframe, not the
+# real app URL. This instead reaches into window.parent.document and injects
+# the GA script into the actual top-level page, so it tracks like a normal
+# website. The injection guard makes it safe to run on every rerun.
+GA_MEASUREMENT_ID = "G-0GRGT501FX"
+components.html(f"""
+<script>
+(function() {{
+    if (window.parent.document.getElementById('ga-script-injected')) return;
+    var s1 = window.parent.document.createElement('script');
+    s1.id = 'ga-script-injected';
+    s1.async = true;
+    s1.src = 'https://www.googletagmanager.com/gtag/js?id={GA_MEASUREMENT_ID}';
+    window.parent.document.head.appendChild(s1);
+
+    var s2 = window.parent.document.createElement('script');
+    s2.innerHTML = `
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){{ dataLayer.push(arguments); }}
+        gtag('js', new Date());
+        gtag('config', '{GA_MEASUREMENT_ID}');
+    `;
+    window.parent.document.head.appendChild(s2);
+}})();
+</script>
+""", height=0, width=0)
 
 st.markdown("""
 <style>
