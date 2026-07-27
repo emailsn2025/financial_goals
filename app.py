@@ -2096,17 +2096,37 @@ with tab_goals:
         )
         alloc = smart_allocation()
         alloc_rows = []
+        tot_tagged = tot_pool = tot_allocated = tot_cost = 0.0
         for g in alloc:
             tagged_names = g.get("tagged_assets") or []
+            tagged_contrib = g.get("tagged_contrib", 0)
+            pool_contrib   = g.get("untagged_contrib", 0)
+            allocated      = g.get("allocated", 0)
+            cost           = g.get("display_cost", 0)
             alloc_rows.append({
                 "Goal":                g["name"] or "(unnamed)",
                 "Tagged Asset(s)":     ", ".join(tagged_names) if tagged_names else "—",
-                "From Tagged Assets":  fmt(g.get("tagged_contrib", 0)),
-                "From Shared Pool":    fmt(g.get("untagged_contrib", 0)),
-                "Total Allocated":     fmt(g.get("allocated", 0)),
-                "Goal Cost":           fmt(g.get("display_cost", 0)),
+                "From Tagged Assets":  fmt(tagged_contrib),
+                "From Shared Pool":    fmt(pool_contrib),
+                "Total Allocated":     fmt(allocated),
+                "Goal Cost":           fmt(cost),
                 "% Met":               f"{g.get('pct',0)}%",
             })
+            tot_tagged    += tagged_contrib
+            tot_pool      += pool_contrib
+            tot_allocated += allocated
+            tot_cost      += cost
+
+        overall_pct = round((tot_allocated / tot_cost) * 100) if tot_cost > 0 else 0
+        alloc_rows.append({
+            "Goal":                "TOTAL",
+            "Tagged Asset(s)":     "",
+            "From Tagged Assets":  fmt(tot_tagged),
+            "From Shared Pool":    fmt(tot_pool),
+            "Total Allocated":     fmt(tot_allocated),
+            "Goal Cost":           fmt(tot_cost),
+            "% Met":               f"{overall_pct}%",
+        })
         st.dataframe(alloc_rows, width="stretch", hide_index=True)
 
         untagged_val = sum(a.get("value",0) or 0 for a in st.session_state.assets
