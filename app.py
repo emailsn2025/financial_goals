@@ -1682,7 +1682,7 @@ with tab_inc_exp:
     # ── Fast batch editor ──
     inc_df = pd.DataFrame([{
         "Source":       inc.get("name", ""),
-        "Monthly":    int(inc.get("monthly", 0) or 0),
+        "Monthly":      fmt_full(inc.get("monthly", 0) or 0),
         "Growth %/yr":  float(inc.get("growth", 5.0) or 5.0),
         "Start Year":   int(inc.get("start_year", THIS_YEAR) or THIS_YEAR),
         "End Year":     int(inc.get("end_year", THIS_YEAR + 30) or THIS_YEAR + 30),
@@ -1695,10 +1695,10 @@ with tab_inc_exp:
         inc_df,
         num_rows="dynamic",
         use_container_width=True,
-        key=f"inc_editor_v{_v}",
+        key=f"inc_editor_v{_v}_{st.session_state.number_format}",
         column_config={
             "Source":      st.column_config.TextColumn("Source", width="large"),
-            "Monthly":   st.column_config.NumberColumn("Monthly", format="%d", min_value=0),
+            "Monthly":     st.column_config.TextColumn("Monthly", help="e.g. 1,800,000"),
             "Growth %/yr": st.column_config.NumberColumn("Growth %/yr", format="%.1f", min_value=0.0, max_value=30.0, step=0.5),
             "Start Year":  st.column_config.NumberColumn("Start Year", format="%d", min_value=2000, max_value=2100, step=1),
             "End Year":    st.column_config.NumberColumn("End Year", format="%d", min_value=2000, max_value=2100, step=1),
@@ -1711,7 +1711,7 @@ with tab_inc_exp:
         raw_name = r.get("Source", "")
         name = "" if pd.isna(raw_name) else str(raw_name).strip()
         raw_monthly = r.get("Monthly", 0)
-        monthly = 0 if pd.isna(raw_monthly) else int(raw_monthly)
+        monthly = 0 if pd.isna(raw_monthly) else int(parse_amount(str(raw_monthly)))
         if not name and monthly == 0: continue  # skip ghost/empty rows
         new_inc_state.append({
             "name":       name,
@@ -1752,7 +1752,7 @@ with tab_inc_exp:
 
     exp_df = pd.DataFrame([{
         "Name":         e.get("name", ""),
-        "Monthly":    int(e.get("monthly", 0) or 0),
+        "Monthly":      fmt_full(e.get("monthly", 0) or 0),
         "Inflation %":  float(e.get("inflation", 6.0) or 6.0),
         "Start Year":   int(e.get("start_year", THIS_YEAR) or THIS_YEAR),
         "End Year":     int(e.get("end_year", THIS_YEAR + 30) or THIS_YEAR + 30),
@@ -1766,10 +1766,10 @@ with tab_inc_exp:
         exp_df,
         num_rows="dynamic",
         use_container_width=True,
-        key=f"exp_editor_v{_v}",
+        key=f"exp_editor_v{_v}_{st.session_state.number_format}",
         column_config={
             "Name":        st.column_config.TextColumn("Name", width="large"),
-            "Monthly":   st.column_config.NumberColumn("Monthly", format="%d", min_value=0),
+            "Monthly":     st.column_config.TextColumn("Monthly", help="e.g. 1,800,000"),
             "Inflation %": st.column_config.NumberColumn("Inflation %", format="%.1f", min_value=0.0, max_value=30.0, step=0.5),
             "Start Year":  st.column_config.NumberColumn("Start Year", format="%d", min_value=2000, max_value=2100, step=1),
             "End Year":    st.column_config.NumberColumn("End Year", format="%d", min_value=2000, max_value=2100, step=1),
@@ -1782,7 +1782,7 @@ with tab_inc_exp:
         raw_name = r.get("Name", "")
         name = "" if pd.isna(raw_name) else str(raw_name).strip()
         raw_monthly = r.get("Monthly", 0)
-        monthly = 0 if pd.isna(raw_monthly) else int(raw_monthly)
+        monthly = 0 if pd.isna(raw_monthly) else int(parse_amount(str(raw_monthly)))
         if not name and monthly == 0: continue
         new_exp_state.append({
             "name":       name,
@@ -1880,7 +1880,7 @@ with tab_goals:
     # Fast batch editor for goals
     goals_df = pd.DataFrame([{
         "Goal Name":       g.get("name", ""),
-        "Cost Today":    int(g.get("current_cost", 0) or 0),
+        "Cost Today":      fmt_full(g.get("current_cost", 0) or 0),
         "Inflation %":     float(g.get("inflation", 6.0) or 6.0),
         "Start Year":      int(g.get("start_year", THIS_YEAR + 5) or THIS_YEAR + 5),
         "End Year":        int(g.get("end_year", g.get("start_year", THIS_YEAR + 5)) or THIS_YEAR + 5),
@@ -1895,10 +1895,10 @@ with tab_goals:
         goals_df,
         num_rows="dynamic",
         use_container_width=True,
-        key=f"goals_editor_v{_v}",
+        key=f"goals_editor_v{_v}_{st.session_state.number_format}",
         column_config={
             "Goal Name":       st.column_config.TextColumn("Goal Name", width="large"),
-            "Cost Today":    st.column_config.NumberColumn("Cost Today", format="%d", min_value=0),
+            "Cost Today":      st.column_config.TextColumn("Cost Today", help="e.g. 1,800,000"),
             "Inflation %":     st.column_config.NumberColumn("Inflation %", format="%.1f", min_value=0.0, max_value=30.0, step=0.5),
             "Start Year":      st.column_config.NumberColumn("Start Year", format="%d", min_value=2000, max_value=2100, step=1),
             "End Year":        st.column_config.NumberColumn("End Year", format="%d", min_value=2000, max_value=2100, step=1),
@@ -1912,7 +1912,7 @@ with tab_goals:
         raw_name = r.get("Goal Name", "")
         name = "" if pd.isna(raw_name) else str(raw_name).strip()
         raw_cost = r.get("Cost Today", 0)
-        cost = 0 if pd.isna(raw_cost) else int(raw_cost)
+        cost = 0 if pd.isna(raw_cost) else int(parse_amount(str(raw_cost)))
         if not name and cost == 0: continue
         sy = int(r.get("Start Year", THIS_YEAR + 5) or THIS_YEAR + 5)
         ey = int(r.get("End Year", sy) or sy)
@@ -1998,13 +1998,13 @@ with tab_assets:
         "Asset Type":       a.get("asset_type", ""),
         "Class":            a.get("asset_class", "Equity") if a.get("asset_class") in ASSET_CLASSES else "Equity",
         "Purchase Date":    a.get("purchase_date", "") or "",
-        "Invested":       int(a.get("invested", 0) or 0),
-        "Current Value":  int(a.get("value", 0) or 0),
-        "Maturity Amount":       int(a.get("maturity_amt", 0) or 0),
+        "Invested":         fmt_full(a.get("invested", 0) or 0),
+        "Current Value":    fmt_full(a.get("value", 0) or 0),
+        "Maturity Amount":  fmt_full(a.get("maturity_amt", 0) or 0),
         "Maturity Date":    a.get("maturity_date", "") or "",
         "CAGR %":           float(a.get("cagr", 0.0) or 0.0),
         "Tag Goals":        ", ".join(a.get("tagged_goals") or []),
-        "SWP Monthly":         int(a.get("swp_monthly", 0) or 0),
+        "SWP Monthly":      fmt_full(a.get("swp_monthly", 0) or 0),
         "SWP Start Yr":     int(a.get("swp_start_year", 0) or 0),
     } for a in st.session_state.assets])
 
@@ -2018,20 +2018,20 @@ with tab_assets:
         assets_df,
         num_rows="dynamic",
         use_container_width=True,
-        key=f"assets_editor_v{_v}",
+        key=f"assets_editor_v{_v}_{st.session_state.number_format}",
         height=min(400 + len(assets_df) * 8, 700),
         column_config={
             "Asset Name":      st.column_config.TextColumn("Asset Name", width="medium"),
             "Asset Type":      st.column_config.TextColumn("Asset Type", width="medium", help="e.g. Mutual Fund, FD, PMS, Direct Equity, Sovereign Gold Bond"),
             "Class":           st.column_config.SelectboxColumn("Class", options=ASSET_CLASSES, required=True),
             "Purchase Date":   st.column_config.TextColumn("Purchase Date", help="DD/MM/YYYY"),
-            "Invested":      st.column_config.NumberColumn("Invested", format="%d", min_value=0),
-            "Current Value": st.column_config.NumberColumn("Current Value", format="%d", min_value=0),
-            "Maturity Amount":      st.column_config.NumberColumn("Maturity Amount", format="%d", min_value=0),
+            "Invested":        st.column_config.TextColumn("Invested", help="e.g. 1,800,000"),
+            "Current Value":   st.column_config.TextColumn("Current Value", help="e.g. 1,800,000"),
+            "Maturity Amount": st.column_config.TextColumn("Maturity Amount", help="e.g. 1,800,000"),
             "Maturity Date":   st.column_config.TextColumn("Maturity Date", help="DD/MM/YYYY"),
             "CAGR %":          st.column_config.NumberColumn("CAGR %", format="%.2f", min_value=0.0, max_value=50.0, step=0.5, help="Auto-calculated if maturity info provided"),
             "Tag Goals":       st.column_config.TextColumn("Tag Goals", help="Comma-separated goal names"),
-            "SWP Monthly":        st.column_config.NumberColumn("SWP Monthly", format="%d", min_value=0),
+            "SWP Monthly":     st.column_config.TextColumn("SWP Monthly", help="e.g. 1,800,000"),
             "SWP Start Yr":    st.column_config.NumberColumn("SWP Start Yr", format="%d", min_value=0, max_value=100),
         }
     )
@@ -2042,16 +2042,16 @@ with tab_assets:
         raw_name = r.get("Asset Name", "")
         name = "" if pd.isna(raw_name) else str(raw_name).strip()
         raw_val = r.get("Current Value", 0)
-        val = 0 if pd.isna(raw_val) else int(raw_val)
+        val = 0 if pd.isna(raw_val) else int(parse_amount(str(raw_val)))
         if not name and val == 0: continue  # skip ghost/empty rows from data_editor
 
         raw_atype = r.get("Asset Type", "")
         atype = "" if pd.isna(raw_atype) else str(raw_atype).strip()
 
         raw_inv = r.get("Invested", 0)
-        inv = 0 if pd.isna(raw_inv) else int(raw_inv)
+        inv = 0 if pd.isna(raw_inv) else int(parse_amount(str(raw_inv)))
         raw_mat = r.get("Maturity Amount", 0)
-        mat = 0 if pd.isna(raw_mat) else int(raw_mat)
+        mat = 0 if pd.isna(raw_mat) else int(parse_amount(str(raw_mat)))
         raw_pdate = r.get("Purchase Date", "")
         pdate = "" if pd.isna(raw_pdate) else str(raw_pdate).strip()
         raw_mdate = r.get("Maturity Date", "")
@@ -2073,7 +2073,7 @@ with tab_assets:
         if pd.isna(cls) or cls not in ASSET_CLASSES: cls = "Equity"
 
         raw_swp = r.get("SWP Monthly", 0)
-        swp = 0 if pd.isna(raw_swp) else int(raw_swp)
+        swp = 0 if pd.isna(raw_swp) else int(parse_amount(str(raw_swp)))
         raw_swpyr = r.get("SWP Start Yr", 0)
         swpyr = 0 if pd.isna(raw_swpyr) else int(raw_swpyr)
 
