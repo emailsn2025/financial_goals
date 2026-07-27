@@ -89,6 +89,17 @@ def parse_amount(s):
     try: return float(c) if "." in c else int(c)
     except: return 0
 
+def safe_cell(r, col, default):
+    """
+    Safely read a value out of a data_editor row for a numeric field.
+    A blank/new row cell comes through as NaN (a float), and NaN is TRUTHY in
+    Python — so the common `r.get(col, default) or default` pattern silently
+    lets NaN through instead of falling back, then int(NaN)/float(NaN) crashes.
+    This checks pd.isna() explicitly instead of relying on truthiness.
+    """
+    v = r.get(col, default)
+    return default if pd.isna(v) else v
+
 def compound(principal, rate_pct, years):
     return _compound_cached(float(principal), float(rate_pct), float(years))
 
@@ -1716,9 +1727,9 @@ with tab_inc_exp:
         new_inc_state.append({
             "name":       name,
             "monthly":    monthly,
-            "growth":     float(r.get("Growth %/yr", 5.0) or 5.0),
-            "start_year": int(r.get("Start Year", THIS_YEAR) or THIS_YEAR),
-            "end_year":   int(r.get("End Year", THIS_YEAR + 30) or THIS_YEAR + 30),
+            "growth":     float(safe_cell(r, "Growth %/yr", 5.0)),
+            "start_year": int(safe_cell(r, "Start Year", THIS_YEAR)),
+            "end_year":   int(safe_cell(r, "End Year", THIS_YEAR + 30)),
         })
     # Only update if genuinely different — no cache clear needed, cache keys
     # naturally differ when values differ (correctness doesn't require clearing)
@@ -1787,10 +1798,10 @@ with tab_inc_exp:
         new_exp_state.append({
             "name":       name,
             "monthly":    monthly,
-            "inflation":  float(r.get("Inflation %", 6.0) or 6.0),
-            "start_year": int(r.get("Start Year", THIS_YEAR) or THIS_YEAR),
-            "end_year":   int(r.get("End Year", THIS_YEAR + 30) or THIS_YEAR + 30),
-            "cumulative": bool(r.get("Cumulative", False)),
+            "inflation":  float(safe_cell(r, "Inflation %", 6.0)),
+            "start_year": int(safe_cell(r, "Start Year", THIS_YEAR)),
+            "end_year":   int(safe_cell(r, "End Year", THIS_YEAR + 30)),
+            "cumulative": bool(safe_cell(r, "Cumulative", False)),
         })
     if json.dumps(new_exp_state, sort_keys=True) != json.dumps(st.session_state.expenses, sort_keys=True):
         st.session_state.expenses = new_exp_state
@@ -1914,17 +1925,17 @@ with tab_goals:
         raw_cost = r.get("Cost Today", 0)
         cost = 0 if pd.isna(raw_cost) else int(parse_amount(str(raw_cost)))
         if not name and cost == 0: continue
-        sy = int(r.get("Start Year", THIS_YEAR + 5) or THIS_YEAR + 5)
-        ey = int(r.get("End Year", sy) or sy)
+        sy = int(safe_cell(r, "Start Year", THIS_YEAR + 5))
+        ey = int(safe_cell(r, "End Year", sy))
         if ey < sy: ey = sy
         new_goals_state.append({
             "name":         name,
             "current_cost": cost,
-            "inflation":    float(r.get("Inflation %", 6.0) or 6.0),
+            "inflation":    float(safe_cell(r, "Inflation %", 6.0)),
             "start_year":   sy,
             "end_year":     ey,
-            "frequency":    int(r.get("Frequency (yrs)", 0) or 0),
-            "cumulative":   bool(r.get("Cumulative", False)),
+            "frequency":    int(safe_cell(r, "Frequency (yrs)", 0)),
+            "cumulative":   bool(safe_cell(r, "Cumulative", False)),
         })
     if json.dumps(new_goals_state, sort_keys=True) != json.dumps(st.session_state.goals, sort_keys=True):
         st.session_state.goals = new_goals_state
