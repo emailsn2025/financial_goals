@@ -265,13 +265,19 @@ _v = st.session_state.data_version
 # COMPUTED VALUES
 # ══════════════════════════════════════════════════════
 
-def total_monthly_income():  return sum(e["monthly"] for e in st.session_state.income)
-def total_monthly_expense(): return sum(e["monthly"] for e in st.session_state.expenses)
+def total_monthly_income():
+    return sum(e["monthly"] for e in st.session_state.income
+               if int(e.get("start_year", THIS_YEAR) or THIS_YEAR) <= THIS_YEAR <= int(e.get("end_year", 2100) or 2100))
+def total_monthly_expense():
+    return sum(e["monthly"] for e in st.session_state.expenses
+               if int(e.get("start_year", THIS_YEAR) or THIS_YEAR) <= THIS_YEAR <= int(e.get("end_year", 2100) or 2100))
 
 def avg_inflation():
-    tm = total_monthly_expense()
+    active = [e for e in st.session_state.expenses
+              if int(e.get("start_year", THIS_YEAR) or THIS_YEAR) <= THIS_YEAR <= int(e.get("end_year", 2100) or 2100)]
+    tm = sum(e["monthly"] for e in active)
     if tm == 0: return 6.0
-    return sum((e["monthly"]/tm)*e["inflation"] for e in st.session_state.expenses)
+    return sum((e["monthly"]/tm)*e["inflation"] for e in active)
 
 def total_net_worth():  return sum(a["value"] for a in st.session_state.assets)
 def monthly_surplus():  return total_monthly_income() - total_monthly_expense()
@@ -522,8 +528,11 @@ def compute_goal_today_values():
 def expense_coverage_years():
     if not st.session_state.income or not st.session_state.expenses: return None
     for y in range(1, 51):
-        inc = sum(compound(e["monthly"], e.get("growth",5.0), y) for e in st.session_state.income)
-        exp = sum(compound(e["monthly"], e["inflation"], y) for e in st.session_state.expenses)
+        cal_y = THIS_YEAR + y
+        inc = sum(compound(e["monthly"], e.get("growth",5.0), y) for e in st.session_state.income
+                  if int(e.get("start_year", THIS_YEAR) or THIS_YEAR) <= cal_y <= int(e.get("end_year", 2100) or 2100))
+        exp = sum(compound(e["monthly"], e["inflation"], y) for e in st.session_state.expenses
+                  if int(e.get("start_year", THIS_YEAR) or THIS_YEAR) <= cal_y <= int(e.get("end_year", 2100) or 2100))
         if exp > inc: return y
     return None
 
