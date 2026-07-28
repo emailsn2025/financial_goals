@@ -2112,7 +2112,23 @@ with tab_inc_exp:
                 else:
                     v = compound(e["monthly"], e["inflation"], y)
                     row[e["name"] or "—"] = fmt_full(round(v)); total += v
-            row["Total"] = fmt(total); table_data.append(row)
+            row["Total Expenses"] = fmt(total)
+
+            # Monthly salary (total income) for this year, respecting each
+            # income source's own growth rate and active start/end window
+            monthly_salary = 0
+            for inc in st.session_state.income:
+                i_start = int(inc.get("start_year", THIS_YEAR) or THIS_YEAR)
+                i_end   = int(inc.get("end_year", 2100) or 2100)
+                if cal_y < i_start or cal_y > i_end:
+                    continue
+                monthly_salary += compound(inc.get("monthly", 0) or 0, inc.get("growth", 5.0) or 5.0, y)
+
+            monthly_diff = monthly_salary - total
+            row["Monthly Salary"]            = fmt_full(round(monthly_salary))
+            row["Monthly Surplus/Shortage"]   = fmt(monthly_diff)
+            row["Annual Surplus/Shortage"]    = fmt(monthly_diff * 12)
+            table_data.append(row)
         st.dataframe(table_data, width="stretch", hide_index=True)
 
 # ══════════════════════════════════════════════════════
