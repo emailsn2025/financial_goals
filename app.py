@@ -1923,7 +1923,8 @@ with tab_inc_exp:
                 "end_year":   int(safe_cell(r, "End Year", THIS_YEAR + 30)),
             })
         st.session_state.income = new_inc_state
-        st.success(f"✓ Applied — {len(new_inc_state)} income source(s) updated")
+        st.toast(f"✓ Applied — {len(new_inc_state)} income source(s) updated")
+        st.rerun()
 
     st.divider()
     st.markdown("### 💸 Monthly Expenses")
@@ -1996,7 +1997,8 @@ with tab_inc_exp:
                 "cumulative": bool(safe_cell(r, "Cumulative", False)),
             })
         st.session_state.expenses = new_exp_state
-        st.success(f"✓ Applied — {len(new_exp_state)} expense(s) updated")
+        st.toast(f"✓ Applied — {len(new_exp_state)} expense(s) updated")
+        st.rerun()
 
     st.divider()
     # Projection horizon as calendar years
@@ -2133,7 +2135,8 @@ with tab_goals:
                 "cumulative":   bool(safe_cell(r, "Cumulative", False)),
             })
         st.session_state.goals = new_goals_state
-        st.success(f"✓ Applied — {len(new_goals_state)} goal(s) updated")
+        st.toast(f"✓ Applied — {len(new_goals_state)} goal(s) updated")
+        st.rerun()
 
     if st.session_state.goals:
         st.markdown("### Projected Goal Costs")
@@ -2352,7 +2355,8 @@ with tab_assets:
             })
 
         st.session_state.assets = new_assets_state
-        st.success(f"✓ Applied — {len(new_assets_state)} asset(s) updated")
+        st.toast(f"✓ Applied — {len(new_assets_state)} asset(s) updated")
+        st.rerun()
 
     if st.session_state.assets:
         with st.expander(f"📊 Asset Summary Table ({len(st.session_state.assets)} assets) — click to expand", expanded=False):
