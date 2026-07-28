@@ -14,6 +14,7 @@ from reportlab.lib.units import cm
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image as RLImage
 from reportlab.lib.enums import TA_LEFT
+from reportlab.graphics.shapes import Drawing, Rect, String
 
 st.set_page_config(page_title="Net Worth & Goal Planner", page_icon="📊", layout="wide")
 
@@ -974,6 +975,25 @@ def _pdf_table(headers, rows, col_widths=None, font_size=7):
     ]))
     return t
 
+def _pdf_progress_bar(pct, width=130, height=14):
+    """
+    A reportlab-native visual bar (background track + colored fill), matching
+    the live app's tile bars — used since the PDF can't render the Dashboard's
+    HTML/CSS bars directly. Green at 100%, amber above 50%, red below.
+    """
+    pct = min(max(pct, 0), 100)
+    fill_color = colors.HexColor('#059669') if pct >= 100 else (
+                 colors.HexColor('#d97706') if pct > 50 else colors.HexColor('#dc2626'))
+    d = Drawing(width, height)
+    d.add(Rect(0, 0, width, height, fillColor=colors.HexColor('#e2e8f0'), strokeColor=None))
+    fill_w = width * pct / 100
+    if fill_w > 0:
+        d.add(Rect(0, 0, fill_w, height, fillColor=fill_color, strokeColor=None))
+    text_color = colors.white if pct > 20 else colors.HexColor('#334155')
+    d.add(String(width/2, height/2 - 3, f"{round(pct)}%", fontSize=8,
+                 fillColor=text_color, textAnchor='middle'))
+    return d
+
 def _fig_to_pdf_image(fig, width_cm=25, height_cm=9.5, name="chart", errors=None):
     """
     Render a Plotly figure to a static PNG (via kaleido) and wrap it as a
@@ -1043,6 +1063,32 @@ def generate_full_pdf_report():
         if imgs:
             story.append(Table([imgs], colWidths=[12.5*cm]*len(imgs)))
             story.append(Spacer(1, 8))
+
+    if st.session_state.goals:
+        story.append(Paragraph("Goal Coverage", sub_style))
+        gc_headers = ["Goal", "Timeframe", "Completion", "Status"]
+        gc_rows = []
+        for g in smart_allocation():
+            freq = goal_frequency(g)
+            freq_str = f" · every {freq}yr" if freq > 0 else " · one-time"
+            yr_str = f"Yr {g['start_year']}–{g['end_year']}{freq_str}" if freq > 0 else f"Yr {g['start_year']}"
+            gc_rows.append([g["name"] or "(unnamed)", yr_str, _pdf_progress_bar(g["pct"]), g["status"]])
+        gc_table = Table([gc_headers] + gc_rows, colWidths=[5*cm, 3.5*cm, 4.5*cm, 3.5*cm])
+        gc_table.setStyle(TableStyle([
+            ('BACKGROUND',   (0,0), (-1,0), colors.HexColor('#1e293b')),
+            ('TEXTCOLOR',    (0,0), (-1,0), colors.white),
+            ('FONTSIZE',     (0,0), (-1,-1), 8),
+            ('FONTNAME',     (0,0), (-1,0), 'Helvetica-Bold'),
+            ('GRID',         (0,0), (-1,-1), 0.4, colors.HexColor('#cbd5e1')),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f1f5f9')]),
+            ('VALIGN',       (0,0), (-1,-1), 'MIDDLE'),
+            ('LEFTPADDING',  (0,0), (-1,-1), 5),
+            ('RIGHTPADDING', (0,0), (-1,-1), 5),
+            ('TOPPADDING',   (0,0), (-1,-1), 4),
+            ('BOTTOMPADDING',(0,0), (-1,-1), 4),
+        ]))
+        story.append(gc_table)
+        story.append(Spacer(1, 10))
 
     if st.session_state.goals:
         story.append(Paragraph("Goal Summary", sub_style))
