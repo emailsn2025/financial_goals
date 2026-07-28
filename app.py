@@ -1517,21 +1517,26 @@ with tab_dash:
             freq_str = f" · every {freq}yr" if freq > 0 else " · one-time"
             yr_str = f"Yr {g['start_year']}–{g['end_year']}{freq_str}" if freq > 0 else f"Yr {g['start_year']}"
 
-            tiles_html += f'''
-            <div style="background:#1e293b; border-radius:10px; padding:14px 16px; border:1px solid #334155;">
-                <div style="font-weight:700; font-size:14px; color:#fff; margin-bottom:2px;">{g["name"]}</div>
-                <div style="font-size:11px; color:#94a3b8; margin-bottom:10px;">{yr_str}</div>
-                <div style="background:#334155; border-radius:6px; height:22px; position:relative; overflow:hidden;">
-                    <div style="background:{bar_color}; height:100%; width:{pct}%; border-radius:6px; transition:width 0.4s;"></div>
-                    <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.5);">{g["pct"]}%</div>
-                </div>
-                <div style="font-size:11px; color:#94a3b8; margin-top:8px;">{cost_label}: {fmt(g["display_cost"])}</div>
-                <div style="font-size:11px; color:#94a3b8;">Allocated: {fmt(g["allocated"])}</div>
-                <div style="margin-top:8px;">
-                    <span style="background:{bar_color}; color:#fff; padding:3px 10px; border-radius:10px; font-size:10px; font-weight:600;">{g["status"]}</span>
-                </div>
-            </div>
-            '''
+            # Built on ONE line deliberately — a multi-line triple-quoted string here
+            # would carry this loop's Python indentation into the HTML, and Markdown
+            # treats any line starting with 4+ spaces as a code block instead of
+            # parsing it as HTML (which is exactly what broke every tile after the first).
+            tile = (
+                f'<div style="background:#1e293b; border-radius:10px; padding:14px 16px; border:1px solid #334155;">'
+                f'<div style="font-weight:700; font-size:14px; color:#fff; margin-bottom:2px;">{g["name"]}</div>'
+                f'<div style="font-size:11px; color:#94a3b8; margin-bottom:10px;">{yr_str}</div>'
+                f'<div style="background:#334155; border-radius:6px; height:22px; position:relative; overflow:hidden;">'
+                f'<div style="background:{bar_color}; height:100%; width:{pct}%; border-radius:6px; transition:width 0.4s;"></div>'
+                f'<div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.5);">{g["pct"]}%</div>'
+                f'</div>'
+                f'<div style="font-size:11px; color:#94a3b8; margin-top:8px;">{cost_label}: {fmt(g["display_cost"])}</div>'
+                f'<div style="font-size:11px; color:#94a3b8;">Allocated: {fmt(g["allocated"])}</div>'
+                f'<div style="margin-top:8px;">'
+                f'<span style="background:{bar_color}; color:#fff; padding:3px 10px; border-radius:10px; font-size:10px; font-weight:600;">{g["status"]}</span>'
+                f'</div>'
+                f'</div>'
+            )
+            tiles_html += tile
         tiles_html += '</div>'
         st.markdown(tiles_html, unsafe_allow_html=True)
 
