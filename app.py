@@ -62,6 +62,16 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 ASSET_CLASSES = ["Debt", "Equity", "Property", "Precious Metals", "Other"]
+
+# Used only when CAGR is left blank on a new row or a blank Excel cell — never
+# overrides a value the user actually typed (including an explicit 0).
+DEFAULT_CAGR_BY_CLASS = {
+    "Equity":          10.0,
+    "Debt":             6.0,
+    "Property":         7.0,   # not specified by user — reasonable middle-ground assumption
+    "Precious Metals": 10.0,
+    "Other":            8.0,
+}
 LINE_COLORS   = ["#2563eb","#059669","#d97706","#7c3aed","#0d9488","#e11d48","#0891b2","#ca8a04","#6366f1","#14b8a6"]
 TAX_RATES     = {"Equity":0.125, "Precious Metals":0.125, "Debt":0.30, "Property":0.30, "Other":0.30}
 TODAY         = date.today()
@@ -641,6 +651,11 @@ def import_assets_from_excel(uploaded_file):
     Expected columns (case-insensitive):
     Asset Name | Asset Type | Class | Purchase Date | Invested Amount | Current Value |
     Maturity Amount | Maturity Date | CAGR % | Tag Goals | SWP Monthly | SWP Start Yr
+
+    Returns (new_assets, defaulted_cagr_list, error). defaulted_cagr_list holds
+    (name, class, cagr_used) for any row where CAGR was left blank and a
+    class-based default had to be applied, so the caller can show a validation
+    notice — this never overrides a value the user actually typed, including 0.
     """
     try:
         df = pd.read_excel(uploaded_file)
@@ -665,12 +680,14 @@ def import_assets_from_excel(uploaded_file):
             return None
 
         new_assets = []
+        defaulted_cagr_list = []
         for _, row in df.iterrows():
             a = {
                 "name":"","asset_type":"","asset_class":"Equity","purchase_date":"","invested":0,
                 "value":0,"maturity_amt":0,"maturity_date":"","cagr":0.0,
                 "tagged_goals":[],"swp_monthly":0,"swp_start_year":0,
             }
+            cagr_provided = False
             for field, options in col_map.items():
                 c = find_col(df, options)
                 if c and pd.notna(row[c]):
@@ -679,6 +696,7 @@ def import_assets_from_excel(uploaded_file):
                         a[field] = parse_amount(str(val))
                     elif field == "cagr":
                         a[field] = float(str(val).replace("%","").strip() or 0)
+                        cagr_provided = True
                     elif field == "swp_start_year":
                         raw_yr = int(float(str(val).strip() or 0))
                         if 0 < raw_yr <= 1000: raw_yr = THIS_YEAR + raw_yr
@@ -694,16 +712,24 @@ def import_assets_from_excel(uploaded_file):
                     else:
                         a[field] = str(val).strip()
 
-            # Auto-calc CAGR if maturity info present and CAGR not specified
-            if a["maturity_amt"] > 0 and a["cagr"] == 0.0 and a["invested"] > 0:
-                a["cagr"] = round(calc_asset_cagr(
+            # Auto-calc CAGR from maturity info if CAGR wasn't explicitly given
+            if a["maturity_amt"] > 0 and not cagr_provided and a["invested"] > 0:
+                auto = round(calc_asset_cagr(
                     a["invested"], a["maturity_amt"],
                     a["purchase_date"], a["maturity_date"]), 2)
+                if auto > 0:
+                    a["cagr"] = auto
+                    cagr_provided = True
+
+            # Still nothing? Fall back to a class-based default and flag it.
+            if not cagr_provided:
+                a["cagr"] = DEFAULT_CAGR_BY_CLASS.get(a["asset_class"], 8.0)
+                defaulted_cagr_list.append((a["name"] or "(unnamed)", a["asset_class"], a["cagr"]))
 
             new_assets.append(a)
-        return new_assets, None
+        return new_assets, defaulted_cagr_list, None
     except Exception as e:
-        return [], str(e)
+        return [], [], str(e)
 
 # ══════════════════════════════════════════════════════
 # CHARTS
@@ -2325,19 +2351,27 @@ with tab_assets:
         )
         asset_file = st.file_uploader("Upload Assets Excel", type=["xlsx","xls"], key=f"v{_v}_asset_upload")
         if asset_file:
-            new_assets, err = import_assets_from_excel(asset_file)
+            new_assets, defaulted_cagr_list, err = import_assets_from_excel(asset_file)
             if err:
                 st.error(f"Error reading file: {err}")
             else:
                 st.success(f"✓ Found {len(new_assets)} assets. Choose action:")
+                if defaulted_cagr_list:
+                    names_str = ", ".join(f"{n} ({c}: {cg:.1f}%)" for n, c, cg in defaulted_cagr_list)
+                    st.warning(
+                        f"⚠️ {len(defaulted_cagr_list)} asset(s) had no CAGR in the file — a "
+                        f"class-based default will be applied: {names_str}"
+                    )
                 col_a, col_b = st.columns(2)
                 with col_a:
                     if st.button("Replace all assets", key=f"v{_v}_asset_replace"):
                         st.session_state.assets = new_assets
+                        st.session_state["_cagr_defaults_applied"] = defaulted_cagr_list
                         st.session_state.data_version += 1; st.rerun()
                 with col_b:
                     if st.button("Append to existing", key=f"v{_v}_asset_append"):
                         st.session_state.assets.extend(new_assets)
+                        st.session_state["_cagr_defaults_applied"] = defaulted_cagr_list
                         st.session_state.data_version += 1; st.rerun()
 
     gnames = goal_names()
@@ -2390,6 +2424,7 @@ with tab_assets:
 
     if apply_assets:
         new_assets_state = []
+        defaulted_cagr_assets = []  # track (name, class, default_used) for the validation message
         for _, r in edited_assets.iterrows():
             raw_name = r.get("Asset Name", "")
             name = "" if pd.isna(raw_name) else str(raw_name).strip()
@@ -2408,21 +2443,35 @@ with tab_assets:
             pdate = "" if pd.isna(raw_pdate) else str(raw_pdate).strip()
             raw_mdate = r.get("Maturity Date", "")
             mdate = "" if pd.isna(raw_mdate) else str(raw_mdate).strip()
-            raw_cagr = r.get("CAGR %", 0.0)
-            manual_cagr = 0.0 if pd.isna(raw_cagr) else float(raw_cagr)
 
+            cls = r.get("Class", "Equity")
+            if pd.isna(cls) or cls not in ASSET_CLASSES: cls = "Equity"
+
+            raw_cagr = r.get("CAGR %", None)
+            cagr_is_blank = pd.isna(raw_cagr)
+            manual_cagr = 0.0 if cagr_is_blank else float(raw_cagr)
+
+            # CAGR resolution order: (1) auto from maturity info, (2) whatever
+            # the user actually typed — including an explicit 0, (3) only if
+            # truly left blank, fall back to a class-based default.
             if mat > 0 and inv > 0 and mdate:
                 auto = round(calc_asset_cagr(inv, mat, pdate or str(TODAY), mdate), 2)
-                cagr = auto if auto > 0 else manual_cagr
+                if auto > 0:
+                    cagr = auto
+                elif not cagr_is_blank:
+                    cagr = manual_cagr
+                else:
+                    cagr = DEFAULT_CAGR_BY_CLASS.get(cls, 8.0)
+                    defaulted_cagr_assets.append((name or "(unnamed)", cls, cagr))
+            elif cagr_is_blank:
+                cagr = DEFAULT_CAGR_BY_CLASS.get(cls, 8.0)
+                defaulted_cagr_assets.append((name or "(unnamed)", cls, cagr))
             else:
                 cagr = manual_cagr
 
             raw_tags = r.get("Tag Goals", "")
             tags_raw = "" if pd.isna(raw_tags) else str(raw_tags).strip()
             tags = [t.strip() for t in tags_raw.split(",") if t.strip() and t.strip() in gnames]
-
-            cls = r.get("Class", "Equity")
-            if pd.isna(cls) or cls not in ASSET_CLASSES: cls = "Equity"
 
             raw_swp = r.get("SWP Monthly", 0)
             swp = 0 if pd.isna(raw_swp) else int(parse_amount(str(raw_swp)))
@@ -2444,8 +2493,17 @@ with tab_assets:
             })
 
         st.session_state.assets = new_assets_state
+        st.session_state["_cagr_defaults_applied"] = defaulted_cagr_assets
         st.toast(f"✓ Applied — {len(new_assets_state)} asset(s) updated")
         st.rerun()
+
+    if st.session_state.get("_cagr_defaults_applied"):
+        defaulted = st.session_state.pop("_cagr_defaults_applied")
+        names_str = ", ".join(f"{n} ({c}: {cg:.1f}%)" for n, c, cg in defaulted)
+        st.warning(
+            f"⚠️ **{len(defaulted)} asset(s) had no CAGR entered — a class-based default was "
+            f"applied. Please review and adjust if needed:** {names_str}"
+        )
 
     if st.session_state.assets:
         with st.expander(f"📊 Asset Summary Table ({len(st.session_state.assets)} assets) — click to expand", expanded=False):
