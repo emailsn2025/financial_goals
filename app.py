@@ -1492,21 +1492,48 @@ with tab_dash:
     alloc = smart_allocation()
     if not alloc:
         st.info("Add goals and assets to see allocation.")
-    for g in alloc:
-        col_info, col_bar = st.columns([1,2])
-        with col_info:
-            css = "badge-green" if g["pct"]>=100 else ("badge-amber" if g["pct"]>50 else "badge-red")
+    else:
+        sort_choice = st.selectbox(
+            "Arrange goals by",
+            ["Target Date (Soonest First)", "Goal Amount (Highest First)",
+             "% Completion (Highest First)", "Not Started First"],
+            key=f"v{_v}_goal_sort",
+        )
+        if sort_choice == "Target Date (Soonest First)":
+            alloc_sorted = sorted(alloc, key=lambda g: g["start_year"])
+        elif sort_choice == "Goal Amount (Highest First)":
+            alloc_sorted = sorted(alloc, key=lambda g: g["display_cost"], reverse=True)
+        elif sort_choice == "% Completion (Highest First)":
+            alloc_sorted = sorted(alloc, key=lambda g: g["pct"], reverse=True)
+        else:  # Not Started First
+            alloc_sorted = sorted(alloc, key=lambda g: g["pct"])
+
+        tiles_html = '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(270px, 1fr)); gap:14px; margin-top:10px;">'
+        for g in alloc_sorted:
+            pct = min(g["pct"], 100)
+            bar_color = "#059669" if pct >= 100 else ("#d97706" if pct > 50 else "#dc2626")
             cost_label = "Cumulative cost" if goal_uses_cumulative(g) else "First occurrence cost"
             freq = goal_frequency(g)
             freq_str = f" · every {freq}yr" if freq > 0 else " · one-time"
             yr_str = f"Yr {g['start_year']}–{g['end_year']}{freq_str}" if freq > 0 else f"Yr {g['start_year']}"
-            st.markdown(f'**{g["name"]}** · {yr_str}')
-            st.markdown(f'{cost_label}: {fmt(g["display_cost"])} · Allocated: {fmt(g["allocated"])}')
-            if g["tagged_assets"]:
-                st.caption(f'🏷️ {", ".join(g["tagged_assets"])} → {fmt(g["tagged_contrib"])} + untagged: {fmt(g["untagged_contrib"])}')
-            st.markdown(f'<span class="{css}">{g["status"]} ({g["pct"]}%)</span>', unsafe_allow_html=True)
-        with col_bar:
-            st.progress(min(g["pct"],100)/100)
+
+            tiles_html += f'''
+            <div style="background:#1e293b; border-radius:10px; padding:14px 16px; border:1px solid #334155;">
+                <div style="font-weight:700; font-size:14px; color:#fff; margin-bottom:2px;">{g["name"]}</div>
+                <div style="font-size:11px; color:#94a3b8; margin-bottom:10px;">{yr_str}</div>
+                <div style="background:#334155; border-radius:6px; height:22px; position:relative; overflow:hidden;">
+                    <div style="background:{bar_color}; height:100%; width:{pct}%; border-radius:6px; transition:width 0.4s;"></div>
+                    <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.5);">{g["pct"]}%</div>
+                </div>
+                <div style="font-size:11px; color:#94a3b8; margin-top:8px;">{cost_label}: {fmt(g["display_cost"])}</div>
+                <div style="font-size:11px; color:#94a3b8;">Allocated: {fmt(g["allocated"])}</div>
+                <div style="margin-top:8px;">
+                    <span style="background:{bar_color}; color:#fff; padding:3px 10px; border-radius:10px; font-size:10px; font-weight:600;">{g["status"]}</span>
+                </div>
+            </div>
+            '''
+        tiles_html += '</div>'
+        st.markdown(tiles_html, unsafe_allow_html=True)
 
     if st.session_state.assets:
         cl, cr = st.columns(2)
