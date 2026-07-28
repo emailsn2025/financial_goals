@@ -1367,24 +1367,36 @@ st.markdown(f"""
     background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
     padding: 16px 28px;
     border-radius: 12px;
-    display: flex;
-    align-items: center;
     margin-bottom: 16px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.3);
 ">
-    <div style="flex: 0 0 auto;">
-        <div style="color:#ffffff; font-size:26px; font-weight:700; letter-spacing:-0.5px; white-space:nowrap;">
-            📊 Net Worth &amp; Goal Planner
+    <div style="display: flex; align-items: center;">
+        <div style="flex: 0 0 auto;">
+            <div style="color:#ffffff; font-size:26px; font-weight:700; letter-spacing:-0.5px; white-space:nowrap;">
+                📊 Net Worth &amp; Goal Planner
+            </div>
+            <div style="color:#94a3b8; font-size:13px; margin-top:3px; white-space:nowrap;">
+                Project your finances · Track goals · Allocate assets
+            </div>
         </div>
-        <div style="color:#94a3b8; font-size:13px; margin-top:3px; white-space:nowrap;">
-            Project your finances · Track goals · Allocate assets
+        <div style="flex: 1 1 auto; text-align:center; color:#94a3b8; font-size:26px; font-style:italic; padding:0 12px;">
+            Developed by Sandeep Narang
+        </div>
+        <div style="flex: 0 0 auto; display:flex; align-items:center; gap:12px;">
+            {logo_html}
         </div>
     </div>
-    <div style="flex: 1 1 auto; text-align:center; color:#94a3b8; font-size:26px; font-style:italic; padding:0 12px;">
-        Developed by Sandeep Narang
-    </div>
-    <div style="flex: 0 0 auto; display:flex; align-items:center; gap:12px;">
-        {logo_html}
+    <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(148,163,184,0.2); font-size:11px; line-height:1.6;">
+        <span style="color:#f59e0b;">⚠️ Disclaimer:</span>
+        <span style="color:#94a3b8;"> This calculator is for personal planning only and does not constitute financial advice.
+        Projections are estimates — actual returns, inflation and tax may differ.
+        Consult a qualified financial advisor before making investment decisions.</span>
+        <br/>
+        <span style="color:#34d399;">🔒 Privacy:</span>
+        <span style="color:#94a3b8;"> Your financial data — income, expenses, goals, and assets — never leaves your
+        browser session. It is never stored, transmitted, or retained anywhere; it's lost when you close
+        the tab unless you download it using the Save button below. The one exception: if you submit
+        feedback below, only your rating and comment text are sent — nothing from your financial data.</span>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -1445,19 +1457,6 @@ shortfall banner, and personalized recommendations.
 • Import Income, Expenses, Goals, and Assets in bulk via Excel — look for the import panel in each tab<br/>
 • All figures use plain comma-grouped numbers with Million/Billion abbreviations for large amounts —
   enter and read values in whatever currency you're tracking
-
-<br/><br/>
-<span style="color:#f59e0b;">⚠️ Disclaimer:</span>
-<span style="color:#94a3b8;"> This calculator is for personal planning only and does not constitute financial advice.
-Projections are estimates — actual returns, inflation and tax may differ.
-Consult a qualified financial advisor before making investment decisions.</span>
-
-<br/><br/>
-<span style="color:#34d399;">🔒 Privacy:</span>
-<span style="color:#94a3b8;"> Your financial data — income, expenses, goals, and assets — never leaves your
-browser session. It is never stored, transmitted, or retained anywhere; it's lost when you close
-the tab unless you download it using the Save button below. The one exception: if you submit
-feedback below, only your rating and comment text are sent — nothing from your financial data.</span>
 </div>
 </details>
 </div>
