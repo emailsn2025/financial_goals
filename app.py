@@ -409,6 +409,17 @@ def smart_allocation():
     ret_corpus     = float(st.session_state.get("ret_opening_corpus", 0) or 0)
     ret_goal_name  = st.session_state.get("ret_goal_name", "")
 
+    untagged_assets = [a for a in st.session_state.assets if not (a.get("tagged_goals") or [])]
+
+    # The shared/untagged pool must DEPLETE as goals consume it in order —
+    # recomputing the FULL untagged value fresh for every goal (the previous
+    # bug) let every single goal check itself against the entire pool with no
+    # memory of what earlier goals already used, so 10+ goals could each show
+    # "100% funded" off the very same money. `remaining_pool` carries forward
+    # what's actually left, compounding only over the gap to the next goal.
+    remaining_pool = None
+    prev_start = 0
+
     for g in projs:
         gname   = g["name"] or ""
         use_cum = goal_uses_cumulative(g)
@@ -418,20 +429,27 @@ def smart_allocation():
         cost    = goal_value_at_start(g, wcagr_pct) if use_cum else g["inflated_cost"]
         yr      = g["start_year"]   # project assets to when goal first hits
 
-        tagged   = [a for a in st.session_state.assets if gname and gname in (a.get("tagged_goals") or [])]
-        untagged = [a for a in st.session_state.assets if not (a.get("tagged_goals") or [])]
-
-        tagged_val   = sum(asset_value_at_year(a, yr, ai) for a in tagged)
-        untagged_val = sum(asset_value_at_year(a, yr, ai) for a in untagged)
+        tagged = [a for a in st.session_state.assets if gname and gname in (a.get("tagged_goals") or [])]
+        tagged_val = sum(asset_value_at_year(a, yr, ai) for a in tagged)
 
         # Add retirement corpus if this goal is the retirement goal
         if gname and gname == ret_goal_name and ret_corpus > 0:
             tagged_val += ret_corpus
 
+        if remaining_pool is None:
+            untagged_val = sum(asset_value_at_year(a, yr, ai) for a in untagged_assets)
+        else:
+            gap = yr - prev_start
+            untagged_val = remaining_pool * compound(1, wcagr_pct, gap) if gap > 0 and wcagr_pct > 0 else remaining_pool
+
         gap_after_tagged = max(cost - tagged_val, 0)
         filler           = min(untagged_val, gap_after_tagged)
         allocated        = min(tagged_val, cost) + filler
-        pct              = min((allocated / cost) * 100, 100) if cost > 0 else 0
+        pct              = round(min((allocated / cost) * 100, 100) if cost > 0 else 0)
+
+        # Deplete the shared pool by what this goal actually used
+        remaining_pool = max(untagged_val - filler, 0)
+        prev_start     = yr
 
         tagged_names = [a["name"] or "?" for a in tagged]
         if gname == ret_goal_name and ret_corpus > 0:
@@ -445,7 +463,7 @@ def smart_allocation():
             "tagged_contrib":   min(tagged_val, cost),
             "untagged_contrib": filler,
             "tagged_assets":    tagged_names,
-            "pct":              round(pct),
+            "pct":              pct,
             "status":           status,
         })
     return results
