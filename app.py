@@ -29,7 +29,7 @@ components.html(f"""
     var s1 = window.parent.document.createElement('script');
     s1.id = 'ga-script-injected';
     s1.async = true;
-    s1.src = '[https://www.googletagmanager.com/gtag/js?id=](https://www.googletagmanager.com/gtag/js?id=){GA_MEASUREMENT_ID}';
+    s1.src = 'https://www.googletagmanager.com/gtag/js?id={GA_MEASUREMENT_ID}';
     window.parent.document.head.appendChild(s1);
 
     var s2 = window.parent.document.createElement('script');
@@ -343,16 +343,13 @@ def goal_value_at_start(g, wcagr_pct):
     r = wcagr_pct / 100
     return sum(cost / ((1 + r) ** (yr - start)) for yr, cost in occs)
 
-# ── Smart allocation: tagged assets first + retirement corpus as virtual asset ──
+# ── Smart allocation: strictly bounds funding to physical assets ──
 def smart_allocation():
     ai        = avg_inflation()
     wcagr_pct = weighted_cagr()
     wcagr     = wcagr_pct / 100
     projs     = goal_projections()
     results   = []
-
-    ret_corpus     = float(st.session_state.get("ret_opening_corpus", 0) or 0)
-    ret_goal_name  = st.session_state.get("ret_goal_name", "")
 
     untagged_assets = [a for a in st.session_state.assets if not (a.get("tagged_goals") or [])]
 
@@ -367,9 +364,6 @@ def smart_allocation():
 
         tagged = [a for a in st.session_state.assets if gname and gname in (a.get("tagged_goals") or [])]
         tagged_val = sum(asset_value_at_year(a, yr, ai) for a in tagged)
-
-        if gname and gname == ret_goal_name and ret_corpus > 0:
-            tagged_val += ret_corpus
 
         if remaining_pool is None:
             untagged_val = sum(asset_value_at_year(a, yr, ai) for a in untagged_assets)
@@ -388,8 +382,6 @@ def smart_allocation():
         prev_start     = yr
 
         tagged_names = [a["name"] or "?" for a in tagged]
-        if gname == ret_goal_name and ret_corpus > 0:
-            tagged_names.append(f"Retirement corpus ({fmt(ret_corpus)})")
 
         status = "Fully Funded" if pct >= 100 else ("Partially Funded" if pct > 0 else "Unfunded")
         results.append({
@@ -406,18 +398,17 @@ def smart_allocation():
     return results
 
 def calculate_surplus_today():
-    """Calculates the remaining untagged pool after all goals are funded, discounted to today."""
+    """Calculates the remaining untagged pool plus any excess tagged funds after all goals are funded, discounted to today."""
     ai        = avg_inflation()
     wcagr_pct = weighted_cagr()
     wcagr     = wcagr_pct / 100
     projs     = goal_projections()
     
-    ret_corpus    = float(st.session_state.get("ret_opening_corpus", 0) or 0)
-    ret_goal_name = st.session_state.get("ret_goal_name", "")
     untagged_assets = [a for a in st.session_state.assets if not (a.get("tagged_goals") or [])]
     
     remaining_pool = None
     prev_start = 0
+    total_excess_tagged_today = 0.0
     
     for g in projs:
         gname   = g["name"] or ""
@@ -427,8 +418,6 @@ def calculate_surplus_today():
         
         tagged = [a for a in st.session_state.assets if gname and gname in (a.get("tagged_goals") or [])]
         tagged_val = sum(asset_value_at_year(a, yr, ai) for a in tagged)
-        if gname and gname == ret_goal_name and ret_corpus > 0:
-            tagged_val += ret_corpus
             
         if remaining_pool is None:
             untagged_val = sum(asset_value_at_year(a, yr, ai) for a in untagged_assets)
@@ -437,16 +426,24 @@ def calculate_surplus_today():
             untagged_val = remaining_pool * compound(1, wcagr_pct, gap) if gap > 0 and wcagr_pct > 0 else remaining_pool
             
         gap_after_tagged = max(cost - tagged_val, 0)
-        filler           = min(untagged_val, gap_after_tagged)
+        excess_tagged    = max(tagged_val - cost, 0)
         
-        remaining_pool = max(untagged_val - filler, 0)
-        prev_start     = yr
+        # Discount the excess tagged back to today and add to a running total
+        if excess_tagged > 0:
+            total_excess_tagged_today += excess_tagged / ((1 + wcagr) ** yr) if wcagr > 0 and yr > 0 else excess_tagged
+
+        filler           = min(untagged_val, gap_after_tagged)
+        remaining_pool   = max(untagged_val - filler, 0)
+        prev_start       = yr
         
     if remaining_pool is None:
         remaining_pool = sum(a["value"] for a in untagged_assets)
         prev_start = 0
 
-    return remaining_pool / ((1 + wcagr) ** prev_start) if wcagr > 0 and prev_start > 0 else remaining_pool
+    untagged_surplus_today = remaining_pool / ((1 + wcagr) ** prev_start) if wcagr > 0 and prev_start > 0 else remaining_pool
+    
+    # Total true surplus is the remaining untagged pool PLUS any overfunded tagged amounts
+    return untagged_surplus_today + total_excess_tagged_today
 
 def compute_goal_today_values():
     result = {}
@@ -1698,7 +1695,7 @@ with tab_dash:
                 unsafe_allow_html=True,
             )
 
-    FEEDBACK_WEBHOOK_URL = "[https://script.google.com/macros/s/AKfycbwSEyeDApgHgM71xmef4tryXR9M-jP2Hi9njW8QB_mbBKnWnA4NSE_DJSvU7caAQOTX/exec](https://script.google.com/macros/s/AKfycbwSEyeDApgHgM71xmef4tryXR9M-jP2Hi9njW8QB_mbBKnWnA4NSE_DJSvU7caAQOTX/exec)"
+    FEEDBACK_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbwSEyeDApgHgM71xmef4tryXR9M-jP2Hi9njW8QB_mbBKnWnA4NSE_DJSvU7caAQOTX/exec"
 
     st.markdown("---")
     st.markdown("### 💬 Feedback")
