@@ -483,55 +483,57 @@ def smart_allocation():
             "pct":              pct,
             "status":           status,
         })
+
+    # Expose the leftover untagged pool after the LAST goal (future value, and
+    # the year it's valued at) so surplus calculations elsewhere can discount
+    # it to today's money directly — instead of re-running a second, separate
+    # simulation that could drift from this one (exactly the bug that caused
+    # % Met and Allocated-from-Corpus to contradict each other on some goals).
+    st.session_state["_smart_alloc_surplus_future"] = remaining_pool if remaining_pool is not None else 0
+    st.session_state["_smart_alloc_surplus_year"]   = prev_start
+
     return results
 
 def compute_goal_today_values():
     """
-    Per-goal 'Allocated from Current Corpus' figures, in today's money — the SAME
-    FIFO + discounting math the Dashboard's Goal Summary table uses, extracted here
-    so any other view (e.g. an asset-level breakdown) shows figures that always
-    match the Dashboard exactly, with no risk of the two drifting apart.
+    Per-goal 'Allocated from Current Corpus' figures, in today's money.
+
+    This used to re-run its OWN separate FIFO pool simulation, which could
+    (and did) drift from smart_allocation()'s result — its first-goal pool
+    wrongly included ALL assets (tagged + untagged) instead of just the
+    shared untagged pool, and every goal after the first ignored its own
+    tagged assets entirely. That let two goals in the same table show
+    contradictory numbers: % Met / Status = 100% from smart_allocation(),
+    while this function's independently-drained pool said 0 was allocated.
+
+    Fixed by not re-simulating at all — this now takes smart_allocation()'s
+    own `allocated` (future-value) figure per goal directly and only adds
+    the today's-value discount step, so the two can never disagree again.
 
     Returns: {goal_name: {"cost", "allocated_today", "pct", "tagged": [asset dicts],
                            "uses_untagged_pool": bool}}
     """
-    alloc_map = {g["name"]: g for g in smart_allocation()}
-    ai        = avg_inflation()
-    wcagr_pct = weighted_cagr()
-    wcagr     = wcagr_pct / 100
-    projs     = goal_projections()
+    alloc_list = smart_allocation()
+    wcagr_pct  = weighted_cagr()
+    wcagr      = wcagr_pct / 100
 
-    remaining, prev_start = None, 0
     result = {}
-    for g in projs:
-        yr    = goal_start_year(g)
+    for g in alloc_list:
         gname = g.get("name", "") or "(unnamed)"
-        entry = alloc_map.get(gname, {})
-        cost  = entry.get("display_cost",
-                goal_value_at_start(g, wcagr_pct) if goal_uses_cumulative(g) else g.get("inflated_cost", 0))
-
-        if remaining is None:
-            pool = sum(asset_value_at_year(a, yr, ai) for a in st.session_state.assets)
-        else:
-            gap  = yr - prev_start
-            pool = remaining * compound(1, wcagr_pct, gap) if gap > 0 and wcagr_pct > 0 else remaining
-
-        allocated_future = min(pool, cost)
+        yr    = goal_start_year(g)
+        allocated_future = g.get("allocated", 0)
         allocated_today  = allocated_future / ((1 + wcagr) ** yr) if wcagr > 0 and yr > 0 else allocated_future
 
         tagged = [a for a in st.session_state.assets
                   if gname and gname in (a.get("tagged_goals") or [])]
 
         result[gname] = {
-            "cost":               cost,
+            "cost":               g.get("display_cost", 0),
             "allocated_today":    allocated_today,
-            "pct":                entry.get("pct", 0),
+            "pct":                g.get("pct", 0),
             "tagged":             tagged,
-            "uses_untagged_pool": entry.get("untagged_contrib", 0) > 0,
+            "uses_untagged_pool": g.get("untagged_contrib", 0) > 0,
         }
-
-        remaining  = max(pool - cost, 0)
-        prev_start = yr
 
     return result
 
@@ -1135,23 +1137,14 @@ def generate_full_pdf_report():
         wcagr     = wcagr_pct / 100
         projs     = goal_projections()
 
-        remaining, prev_start, last_yr = None, 0, 0
+        # Reuses smart_allocation()'s own numbers — see compute_goal_today_values()
+        # docstring for why this must never re-run a second, separate FIFO pass.
+        today_vals = compute_goal_today_values()
+        projs_by_name = {(g["name"] or "(unnamed)"): g for g in projs}
         today_value_by_goal = {}
-        for g in projs:
-            yr    = goal_start_year(g)
-            gname = g.get("name","") or "(unnamed)"
-            cost  = alloc_map.get(gname, {}).get("display_cost",
-                    goal_value_at_start(g, wcagr_pct) if goal_uses_cumulative(g) else g.get("inflated_cost", 0))
-            if remaining is None:
-                pool = sum(asset_value_at_year(a, yr, ai) for a in st.session_state.assets)
-            else:
-                gap = yr - prev_start
-                pool = remaining * compound(1, wcagr_pct, gap) if gap > 0 and wcagr_pct > 0 else remaining
-            allocated_future = min(pool, cost)
-            allocated_today  = allocated_future / ((1+wcagr)**yr) if wcagr > 0 and yr > 0 else allocated_future
-            npv_of_cost      = goal_npv(g, wcagr_pct)
-            today_value_by_goal[gname] = (cost, allocated_future, allocated_today, npv_of_cost)
-            remaining, prev_start, last_yr = max(pool - cost, 0), yr, yr
+        for gname, info in today_vals.items():
+            npv_of_cost = goal_npv(projs_by_name[gname], wcagr_pct)
+            today_value_by_goal[gname] = (info["cost"], None, info["allocated_today"], npv_of_cost)
 
         headers = ["Goal","Start","End","Cumulative Cost","Target Cost","NPV","Alloc. (Today's Value)","% Met","Status"]
         rows = []
@@ -1674,39 +1667,18 @@ with tab_dash:
         wcagr_pct = weighted_cagr()
         wcagr     = wcagr_pct / 100
 
-        # ── Run the FIFO chain ONCE: gives allocated-in-today's-money and
-        #    lets us discount each goal's target cost back to today (NPV) ──
+        # Reuses smart_allocation()'s own numbers — see compute_goal_today_values()
+        # docstring for why this must never re-run a second, separate FIFO pass.
         projs = goal_projections()
-        remaining = None
-        prev_start = 0
-        last_yr = 0
-        today_value_by_goal = {}   # name -> (cost, allocated_future, allocated_today, npv_of_cost)
-        for g in projs:
-            yr    = goal_start_year(g)
-            gname = g.get("name", "") or "(unnamed)"
-            cost  = alloc_map.get(gname, {}).get("display_cost",
-                    goal_value_at_start(g, wcagr_pct) if goal_uses_cumulative(g) else g.get("inflated_cost", 0))
+        today_vals = compute_goal_today_values()
+        today_value_by_goal = {}
+        for gname, info in today_vals.items():
+            g_match = next((g for g in projs if (g["name"] or "(unnamed)") == gname), None)
+            npv_of_cost = goal_npv(g_match, wcagr_pct) if g_match else 0
+            today_value_by_goal[gname] = (info["cost"], None, info["allocated_today"], npv_of_cost)
 
-            if remaining is None:
-                pool = sum(asset_value_at_year(a, yr, ai) for a in st.session_state.assets)
-            else:
-                gap  = yr - prev_start
-                pool = remaining * compound(1, wcagr_pct, gap) if gap > 0 and wcagr_pct > 0 else remaining
-
-            allocated_future = min(pool, cost)
-            allocated_today = allocated_future / ((1 + wcagr) ** yr) if wcagr > 0 and yr > 0 else allocated_future
-            # NPV: correctly discount EACH occurrence individually and sum —
-            # NOT the nominal cumulative total discounted by a single year factor
-            # (that would overstate NPV several-fold for multi-year recurring goals)
-            npv_of_cost = goal_npv(g, wcagr_pct)
-
-            today_value_by_goal[gname] = (cost, allocated_future, allocated_today, npv_of_cost)
-
-            remaining  = max(pool - cost, 0)
-            prev_start = yr
-            last_yr    = yr
-
-        remaining_future = remaining if remaining is not None else 0
+        remaining_future = st.session_state.get("_smart_alloc_surplus_future", 0)
+        last_yr           = st.session_state.get("_smart_alloc_surplus_year", 0)
         surplus_today = remaining_future / ((1 + wcagr) ** last_yr) if wcagr > 0 and last_yr > 0 else remaining_future
 
         summary_rows = []
