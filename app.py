@@ -21,11 +21,6 @@ st.set_page_config(page_title="Net Worth & Goal Planner", page_icon="📊", layo
 # ══════════════════════════════════════════════════════
 # GOOGLE ANALYTICS (GA4)
 # ══════════════════════════════════════════════════════
-# Streamlit renders custom components inside a sandboxed iframe, so a plain
-# <script> tag here would only track pageviews for that tiny iframe, not the
-# real app URL. This instead reaches into window.parent.document and injects
-# the GA script into the actual top-level page, so it tracks like a normal
-# website. The injection guard makes it safe to run on every rerun.
 GA_MEASUREMENT_ID = "G-0GRGT501FX"
 components.html(f"""
 <script>
@@ -63,12 +58,10 @@ st.markdown("""
 
 ASSET_CLASSES = ["Debt", "Equity", "Property", "Precious Metals", "Other"]
 
-# Used only when CAGR is left blank on a new row or a blank Excel cell — never
-# overrides a value the user actually typed (including an explicit 0).
 DEFAULT_CAGR_BY_CLASS = {
     "Equity":          10.0,
     "Debt":             6.0,
-    "Property":         7.0,   # not specified by user — reasonable middle-ground assumption
+    "Property":         7.0,
     "Precious Metals": 10.0,
     "Other":            8.0,
 }
@@ -76,14 +69,12 @@ LINE_COLORS   = ["#2563eb","#059669","#d97706","#7c3aed","#0d9488","#e11d48","#0
 TAX_RATES     = {"Equity":0.125, "Precious Metals":0.125, "Debt":0.30, "Property":0.30, "Other":0.30}
 TODAY         = date.today()
 THIS_YEAR     = TODAY.year
-YEAR_OPTIONS  = list(range(2000, 2101))   # 2000–2100 calendar year picker
+YEAR_OPTIONS  = list(range(2000, 2101))
 
 def cal_to_rel(cal_year):
-    """Convert calendar year → years from now (min 0)."""
     return max(cal_year - THIS_YEAR, 0)
 
 def rel_to_cal(rel_year):
-    """Convert years from now → calendar year."""
     return THIS_YEAR + int(rel_year)
 
 # ══════════════════════════════════════════════════════
@@ -91,13 +82,11 @@ def rel_to_cal(rel_year):
 # ══════════════════════════════════════════════════════
 
 def intl_format(n):
-    """Format a number with standard international (Western) comma grouping — groups of 3 digits."""
     n = int(round(n)); neg = n < 0; n = abs(n)
     s = f"{n:,}"
     return ("-" if neg else "") + s
 
 def indian_format(n):
-    """Format a number with Indian comma grouping — lakhs/crores (2-digit groups after the first 3)."""
     n = int(round(n)); neg = n < 0; n = abs(n); s = str(n)
     if len(s) <= 3: return ("-" if neg else "") + s
     last3 = s[-3:]; rest = s[:-3]; parts = []
@@ -107,11 +96,9 @@ def indian_format(n):
     return ("-" if neg else "") + "".join(reversed(parts)) + "," + last3
 
 def _number_format_mode():
-    """Current display mode: 'Western' (Million/Billion) or 'Indian' (Lakh/Crore)."""
     return st.session_state.get("number_format", "Western")
 
 def fmt(n):
-    """Short display format: Billion/Million (Western) or Crore/Lakh (Indian), per the toggle."""
     n = round(n)
     if _number_format_mode() == "Indian":
         if abs(n) >= 1e7: return f"{n/1e7:.2f} Cr"
@@ -122,25 +109,15 @@ def fmt(n):
     return intl_format(n)
 
 def fmt_full(n):
-    """Full number with comma grouping (no abbreviation), per the toggle."""
     return indian_format(n) if _number_format_mode() == "Indian" else intl_format(n)
 
 def parse_amount(s):
-    """Parse a comma-formatted (or plain) number string back to a value. Works for either
-    grouping style, since both just use commas as separators — stripping commas is enough."""
     if not s or not str(s).strip(): return 0
     c = str(s).replace(",", "").replace(" ", "").strip()
     try: return float(c) if "." in c else int(c)
     except: return 0
 
 def safe_cell(r, col, default):
-    """
-    Safely read a value out of a data_editor row for a numeric field.
-    A blank/new row cell comes through as NaN (a float), and NaN is TRUTHY in
-    Python — so the common `r.get(col, default) or default` pattern silently
-    lets NaN through instead of falling back, then int(NaN)/float(NaN) crashes.
-    This checks pd.isna() explicitly instead of relying on truthiness.
-    """
     v = r.get(col, default)
     return default if pd.isna(v) else v
 
@@ -148,7 +125,6 @@ def compound(principal, rate_pct, years):
     return _compound_cached(float(principal), float(rate_pct), float(years))
 
 def currency_input(label, value, key, **kwargs):
-    """Text input that displays comma-formatted numbers, respecting the number-format toggle."""
     parsed_val = int(round(value)) if value else 0
     indian_mode = _number_format_mode() == "Indian"
     display = (indian_format(parsed_val) if indian_mode else intl_format(parsed_val)) if parsed_val else ""
@@ -158,7 +134,6 @@ def currency_input(label, value, key, **kwargs):
     return parse_amount(raw)
 
 def parse_date(s):
-    """Parse a date string to a date object; return TODAY if blank/invalid."""
     if not s: return TODAY
     if isinstance(s, date): return s
     for fmt_str in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y"):
@@ -167,12 +142,10 @@ def parse_date(s):
     return TODAY
 
 def years_between(d1, d2):
-    """Fractional years between two dates."""
     delta = (d2 - d1).days
     return max(delta / 365.25, 0)
 
 def calc_asset_cagr(invested, maturity_amt, purchase_date_str, maturity_date_str):
-    """Auto-calculate CAGR from invested → maturity over the period."""
     try:
         pd_  = parse_date(purchase_date_str)
         md_  = parse_date(maturity_date_str)
@@ -185,7 +158,6 @@ def asset_tax_rate(asset_class):
     return TAX_RATES.get(asset_class, 0.30)
 
 def asset_net_maturity(invested, maturity_amt, asset_class):
-    """Net maturity after LTCG tax on gains."""
     gain = max(maturity_amt - invested, 0)
     tax  = gain * asset_tax_rate(asset_class)
     return maturity_amt - tax, tax
@@ -196,10 +168,6 @@ def asset_net_maturity(invested, maturity_amt, asset_class):
 
 @st.cache_data(max_entries=2048)
 def _asset_value_at_year_cached(value, cagr, swp_monthly, swp_start_year, target_year, avg_inf):
-    """
-    Pure cached version of asset projection.
-    Takes primitives only (no dict) so cache keys work correctly.
-    """
     val          = float(value)
     swp          = float(swp_monthly or 0)
     swp_start    = int(swp_start_year or 0)
@@ -219,29 +187,22 @@ def _compound_cached(principal, rate_pct, years):
     return principal * (1 + rate_pct / 100) ** years
 
 # ══════════════════════════════════════════════════════
-# ASSET VALUE WITH SWP  (thin wrapper → cached pure fn)
+# ASSET VALUE WITH SWP
 # ══════════════════════════════════════════════════════
 
 def asset_swp_start_rel(a):
-    """
-    Convert an asset's SWP start (stored as a calendar year, e.g. 2030) into
-    years-from-now for the simulation loop. 0/blank means 'not set' — SWP is
-    controlled by swp_monthly being 0 in that case, so treat as starting now.
-    Also accepts legacy relative-year data (small numbers) for backward compatibility.
-    """
     raw = int(a.get("swp_start_year", 0) or 0)
     if raw <= 0:
         return 0
-    if raw > 1000:  # calendar year
+    if raw > 1000:
         return cal_to_rel(raw)
-    return raw  # legacy relative-year data
+    return raw
 
 def asset_swp_start_display(a):
-    """Calendar year to show in the SWP Start Yr field, whatever format is stored."""
     raw = int(a.get("swp_start_year", 0) or 0)
-    if raw > 1000: return raw          # already a calendar year
-    if raw > 0: return rel_to_cal(raw) # legacy relative-year data
-    return THIS_YEAR                   # unset — sensible default
+    if raw > 1000: return raw
+    if raw > 0: return rel_to_cal(raw)
+    return THIS_YEAR
 
 def asset_value_at_year(a, target_year, avg_inf=6.0):
     return _asset_value_at_year_cached(
@@ -314,39 +275,28 @@ def goal_names():
     return [g["name"] or f"Goal {i+1}" for i, g in enumerate(st.session_state.goals)]
 
 def goal_start_year(g):
-    """Years from now until goal starts. Accepts either calendar year (>1000) or relative year."""
     raw = int(g.get("start_year", 1) or 1)
     return cal_to_rel(raw) if raw > 1000 else max(raw, 0)
 
 def goal_end_year(g):
-    """Years from now until goal ends. Accepts either calendar year (>1000) or relative year."""
     raw = int(g.get("end_year", 1) or 1)
     rel = cal_to_rel(raw) if raw > 1000 else max(raw, 0)
     return max(rel, goal_start_year(g))
 
 def goal_frequency(g):
-    """Recurrence interval in years. 0 or blank = one-time."""
     return max(int(g.get("frequency", 0) or 0), 0)
 
 def goal_uses_cumulative(g):
-    """
-    Whether this goal's FUNDING should be assessed against its full multi-year cost.
-    Recurring goals (frequency > 0) ALWAYS use cumulative cost for funding purposes —
-    a goal that recurs annually cannot be considered "funded" by covering just the
-    first payment. The manual "Cumulative" checkbox only matters for one-time goals,
-    where inflated_cost == cumulative_cost anyway, so it's a no-op there.
-    """
     return goal_frequency(g) > 0 or bool(g.get("cumulative", False))
 
 @st.cache_data(max_entries=256)
 def _goal_occurrences_cached(base, inf, start, end, freq):
-    """Pure cached goal occurrence calculator. End year is exclusive."""
     occurrences = []
     if freq <= 0:
         occurrences.append((start, _compound_cached(base, inf, start)))
     else:
         yr = start
-        while yr < end:   # exclusive: 2027–2031 = 2027,2028,2029,2030 (4 payments)
+        while yr < end:
             occurrences.append((yr, _compound_cached(base, inf, yr)))
             yr += freq
     return occurrences
@@ -360,7 +310,6 @@ def goal_occurrences(g):
     return _goal_occurrences_cached(base, inf, start, end, freq)
 
 def goal_projections():
-    """Return goals sorted by start_year, with cumulative cost and last occurrence year."""
     sorted_goals = sorted(st.session_state.goals, key=lambda g: goal_start_year(g))
     out = []
     for g in sorted_goals:
@@ -373,21 +322,13 @@ def goal_projections():
             "start_year":      goal_start_year(g),
             "end_year":        goal_end_year(g),
             "occurrences":     occs,
-            "inflated_cost":   first_cost,   # cost at first occurrence
-            "cumulative_cost": total_cost,   # total across all occurrences
+            "inflated_cost":   first_cost,
+            "cumulative_cost": total_cost,
             "last_year":       last_year,
         })
     return out
 
 def goal_npv(g, wcagr_pct):
-    """
-    Correct present value of a goal's cost stream: discount EACH occurrence
-    individually by its own number of years out, then sum. This is NOT the
-    same as discounting the cumulative (nominal) total by the first year only
-    — that overstates NPV substantially for multi-year recurring goals, since
-    it treats every future payment as if it were due at the first payment's
-    year.
-    """
     occs = g.get("occurrences") or goal_occurrences(g)
     if wcagr_pct <= 0:
         return sum(cost for _, cost in occs)
@@ -395,19 +336,6 @@ def goal_npv(g, wcagr_pct):
     return sum(cost / ((1 + r) ** yr) if yr > 0 else cost for yr, cost in occs)
 
 def goal_value_at_start(g, wcagr_pct):
-    """
-    Lump sum needed AT the goal's own start year to fund its ENTIRE future
-    cost stream, assuming that lump sum keeps growing at wcagr while being
-    drawn down each occurrence — i.e. the same principle the Retirement tab's
-    quarter-by-quarter simulation uses (money isn't just sitting still while
-    being spent, it keeps compounding).
-
-    This is the correct figure to compare against a portfolio pool that has
-    been projected forward to the goal's start year. Comparing that pool
-    against the raw NOMINAL cumulative cost (undiscounted sum of every future
-    payment) is a mismatch — it ignores that the pool keeps earning returns
-    throughout the whole payout window, not just up to the first payment.
-    """
     occs  = g.get("occurrences") or goal_occurrences(g)
     start = goal_start_year(g)
     if wcagr_pct <= 0:
@@ -419,37 +347,27 @@ def goal_value_at_start(g, wcagr_pct):
 def smart_allocation():
     ai        = avg_inflation()
     wcagr_pct = weighted_cagr()
+    wcagr     = wcagr_pct / 100
     projs     = goal_projections()
     results   = []
 
-    # Retirement corpus from retirement tab counts as a virtual tagged asset
     ret_corpus     = float(st.session_state.get("ret_opening_corpus", 0) or 0)
     ret_goal_name  = st.session_state.get("ret_goal_name", "")
 
     untagged_assets = [a for a in st.session_state.assets if not (a.get("tagged_goals") or [])]
 
-    # The shared/untagged pool must DEPLETE as goals consume it in order —
-    # recomputing the FULL untagged value fresh for every goal (the previous
-    # bug) let every single goal check itself against the entire pool with no
-    # memory of what earlier goals already used, so 10+ goals could each show
-    # "100% funded" off the very same money. `remaining_pool` carries forward
-    # what's actually left, compounding only over the gap to the next goal.
     remaining_pool = None
     prev_start = 0
 
     for g in projs:
         gname   = g["name"] or ""
         use_cum = goal_uses_cumulative(g)
-        # For recurring/cumulative goals, fund against the lump sum needed AT
-        # the goal's start year (accounting for continued growth during the
-        # payout window) — NOT the raw undiscounted nominal total.
         cost    = goal_value_at_start(g, wcagr_pct) if use_cum else g["inflated_cost"]
-        yr      = g["start_year"]   # project assets to when goal first hits
+        yr      = g["start_year"]
 
         tagged = [a for a in st.session_state.assets if gname and gname in (a.get("tagged_goals") or [])]
         tagged_val = sum(asset_value_at_year(a, yr, ai) for a in tagged)
 
-        # Add retirement corpus if this goal is the retirement goal
         if gname and gname == ret_goal_name and ret_corpus > 0:
             tagged_val += ret_corpus
 
@@ -463,8 +381,9 @@ def smart_allocation():
         filler           = min(untagged_val, gap_after_tagged)
         allocated        = min(tagged_val, cost) + filler
         pct              = round(min((allocated / cost) * 100, 100) if cost > 0 else 0)
+        
+        allocated_today  = allocated / ((1 + wcagr) ** yr) if wcagr > 0 and yr > 0 else allocated
 
-        # Deplete the shared pool by what this goal actually used
         remaining_pool = max(untagged_val - filler, 0)
         prev_start     = yr
 
@@ -477,6 +396,7 @@ def smart_allocation():
             **g,
             "display_cost":     cost,
             "allocated":        allocated,
+            "allocated_today":  allocated_today,
             "tagged_contrib":   min(tagged_val, cost),
             "untagged_contrib": filler,
             "tagged_assets":    tagged_names,
@@ -485,54 +405,61 @@ def smart_allocation():
         })
     return results
 
-def compute_goal_today_values():
-    """
-    Per-goal 'Allocated from Current Corpus' figures, in today's money — the SAME
-    FIFO + discounting math the Dashboard's Goal Summary table uses, extracted here
-    so any other view (e.g. an asset-level breakdown) shows figures that always
-    match the Dashboard exactly, with no risk of the two drifting apart.
-
-    Returns: {goal_name: {"cost", "allocated_today", "pct", "tagged": [asset dicts],
-                           "uses_untagged_pool": bool}}
-    """
-    alloc_map = {g["name"]: g for g in smart_allocation()}
+def calculate_surplus_today():
+    """Calculates the remaining untagged pool after all goals are funded, discounted to today."""
     ai        = avg_inflation()
     wcagr_pct = weighted_cagr()
     wcagr     = wcagr_pct / 100
     projs     = goal_projections()
-
-    remaining, prev_start = None, 0
-    result = {}
+    
+    ret_corpus    = float(st.session_state.get("ret_opening_corpus", 0) or 0)
+    ret_goal_name = st.session_state.get("ret_goal_name", "")
+    untagged_assets = [a for a in st.session_state.assets if not (a.get("tagged_goals") or [])]
+    
+    remaining_pool = None
+    prev_start = 0
+    
     for g in projs:
-        yr    = goal_start_year(g)
-        gname = g.get("name", "") or "(unnamed)"
-        entry = alloc_map.get(gname, {})
-        cost  = entry.get("display_cost",
-                goal_value_at_start(g, wcagr_pct) if goal_uses_cumulative(g) else g.get("inflated_cost", 0))
-
-        if remaining is None:
-            pool = sum(asset_value_at_year(a, yr, ai) for a in st.session_state.assets)
+        gname   = g["name"] or ""
+        use_cum = goal_uses_cumulative(g)
+        cost    = goal_value_at_start(g, wcagr_pct) if use_cum else g["inflated_cost"]
+        yr      = g["start_year"]
+        
+        tagged = [a for a in st.session_state.assets if gname and gname in (a.get("tagged_goals") or [])]
+        tagged_val = sum(asset_value_at_year(a, yr, ai) for a in tagged)
+        if gname and gname == ret_goal_name and ret_corpus > 0:
+            tagged_val += ret_corpus
+            
+        if remaining_pool is None:
+            untagged_val = sum(asset_value_at_year(a, yr, ai) for a in untagged_assets)
         else:
-            gap  = yr - prev_start
-            pool = remaining * compound(1, wcagr_pct, gap) if gap > 0 and wcagr_pct > 0 else remaining
+            gap = yr - prev_start
+            untagged_val = remaining_pool * compound(1, wcagr_pct, gap) if gap > 0 and wcagr_pct > 0 else remaining_pool
+            
+        gap_after_tagged = max(cost - tagged_val, 0)
+        filler           = min(untagged_val, gap_after_tagged)
+        
+        remaining_pool = max(untagged_val - filler, 0)
+        prev_start     = yr
+        
+    if remaining_pool is None:
+        remaining_pool = sum(a["value"] for a in untagged_assets)
+        prev_start = 0
 
-        allocated_future = min(pool, cost)
-        allocated_today  = allocated_future / ((1 + wcagr) ** yr) if wcagr > 0 and yr > 0 else allocated_future
+    return remaining_pool / ((1 + wcagr) ** prev_start) if wcagr > 0 and prev_start > 0 else remaining_pool
 
-        tagged = [a for a in st.session_state.assets
-                  if gname and gname in (a.get("tagged_goals") or [])]
-
+def compute_goal_today_values():
+    result = {}
+    for alloc in smart_allocation():
+        gname = alloc["name"] or "(unnamed)"
+        tagged = [a for a in st.session_state.assets if gname in (a.get("tagged_goals") or [])]
         result[gname] = {
-            "cost":               cost,
-            "allocated_today":    allocated_today,
-            "pct":                entry.get("pct", 0),
+            "cost":               alloc["display_cost"],
+            "allocated_today":    alloc.get("allocated_today", 0),
+            "pct":                alloc["pct"],
             "tagged":             tagged,
-            "uses_untagged_pool": entry.get("untagged_contrib", 0) > 0,
+            "uses_untagged_pool": alloc.get("untagged_contrib", 0) > 0,
         }
-
-        remaining  = max(pool - cost, 0)
-        prev_start = yr
-
     return result
 
 def expense_coverage_years():
@@ -596,11 +523,6 @@ def get_recommendations():
 # ══════════════════════════════════════════════════════
 
 def import_goals_from_excel(uploaded_file):
-    """
-    Expected columns (case-insensitive):
-    Goal Name | Today's Cost | Inflation % | Start Year | End Year | Frequency (years) | Cumulative
-    Also accepts legacy "Target Year" mapped to Start Year.
-    """
     try:
         df = pd.read_excel(uploaded_file)
         df.columns = [c.strip().lower() for c in df.columns]
@@ -647,16 +569,6 @@ def import_goals_from_excel(uploaded_file):
         return [], str(e)
 
 def import_assets_from_excel(uploaded_file):
-    """
-    Expected columns (case-insensitive):
-    Asset Name | Asset Type | Class | Purchase Date | Invested Amount | Current Value |
-    Maturity Amount | Maturity Date | CAGR % | Tag Goals | SWP Monthly | SWP Start Yr
-
-    Returns (new_assets, defaulted_cagr_list, error). defaulted_cagr_list holds
-    (name, class, cagr_used) for any row where CAGR was left blank and a
-    class-based default had to be applied, so the caller can show a validation
-    notice — this never overrides a value the user actually typed, including 0.
-    """
     try:
         df = pd.read_excel(uploaded_file)
         df.columns = [c.strip().lower() for c in df.columns]
@@ -712,7 +624,6 @@ def import_assets_from_excel(uploaded_file):
                     else:
                         a[field] = str(val).strip()
 
-            # Auto-calc CAGR from maturity info if CAGR wasn't explicitly given
             if a["maturity_amt"] > 0 and not cagr_provided and a["invested"] > 0:
                 auto = round(calc_asset_cagr(
                     a["invested"], a["maturity_amt"],
@@ -721,7 +632,6 @@ def import_assets_from_excel(uploaded_file):
                     a["cagr"] = auto
                     cagr_provided = True
 
-            # Still nothing? Fall back to a class-based default and flag it.
             if not cagr_provided:
                 a["cagr"] = DEFAULT_CAGR_BY_CLASS.get(a["asset_class"], 8.0)
                 defaulted_cagr_list.append((a["name"] or "(unnamed)", a["asset_class"], a["cagr"]))
@@ -735,10 +645,7 @@ def import_assets_from_excel(uploaded_file):
 # CHARTS
 # ══════════════════════════════════════════════════════
 
-
-
 def import_income_from_excel(uploaded_file):
-    """Expected columns: Source | Monthly Amount | Growth %/yr | Start Year | End Year"""
     try:
         df = pd.read_excel(uploaded_file)
         df.columns = [c.strip().lower() for c in df.columns]
@@ -773,9 +680,7 @@ def import_income_from_excel(uploaded_file):
     except Exception as e:
         return [], str(e)
 
-
 def import_expenses_from_excel(uploaded_file):
-    """Expected columns: Name | Monthly Amount | Inflation % | Start Year | End Year | Cumulative"""
     try:
         df = pd.read_excel(uploaded_file)
         df.columns = [c.strip().lower() for c in df.columns]
@@ -904,7 +809,6 @@ def nw_bar_chart():
     return fig
 
 def retirement_drawdown_chart(rows):
-    """Corpus vs quarterly withdrawal chart, built from retirement_simulation() rows."""
     quarters_label  = [r["Quarter"] for r in rows]
     corpus_vals     = [r["Opening Corpus"] for r in rows]
     withdrawal_vals = [r["Withdrawal"] for r in rows]
@@ -989,7 +893,7 @@ def retirement_simulation(opening_corpus, annual_return_pct, asset_class,
     return rows, total_withdrawn
 
 # ══════════════════════════════════════════════════════
-# PDF EXPORT — all tabs onto one document
+# PDF EXPORT
 # ══════════════════════════════════════════════════════
 
 def _pdf_table(headers, rows, col_widths=None, font_size=7):
@@ -1011,11 +915,6 @@ def _pdf_table(headers, rows, col_widths=None, font_size=7):
     return t
 
 def _pdf_progress_bar(pct, width=130, height=14):
-    """
-    A reportlab-native visual bar (background track + colored fill), matching
-    the live app's tile bars — used since the PDF can't render the Dashboard's
-    HTML/CSS bars directly. Green at 100%, amber above 50%, red below.
-    """
     pct = min(max(pct, 0), 100)
     fill_color = colors.HexColor('#059669') if pct >= 100 else (
                  colors.HexColor('#d97706') if pct > 50 else colors.HexColor('#dc2626'))
@@ -1030,27 +929,17 @@ def _pdf_progress_bar(pct, width=130, height=14):
     return d
 
 def _fig_to_pdf_image(fig, width_cm=25, height_cm=9.5, name="chart", errors=None):
-    """
-    Render a Plotly figure to a static PNG (via kaleido) and wrap it as a
-    reportlab Image flowable. Returns None if fig is None or rendering fails.
-    On failure, appends (name, error_message) to the `errors` list (if given)
-    so the caller can surface it instead of silently dropping the chart.
-    """
     if fig is None:
         return None
     try:
-        # White background + no title margin issues when exported standalone
-        fig = go.Figure(fig)  # shallow copy so we don't mutate the on-screen chart
-        fig.update_layout(paper_bgcolor="white", plot_bgcolor="white",
-                           font=dict(color="#1e293b"))
-        png_bytes = fig.to_image(format="png", width=1500,
-                                  height=int(1500 * height_cm / width_cm), scale=2)
+        fig = go.Figure(fig)
+        fig.update_layout(paper_bgcolor="white", plot_bgcolor="white", font=dict(color="#1e293b"))
+        png_bytes = fig.to_image(format="png", width=1500, height=int(1500 * height_cm / width_cm), scale=2)
         return RLImage(io.BytesIO(png_bytes), width=width_cm*cm, height=height_cm*cm)
     except Exception as e:
         if errors is not None:
             errors.append((name, f"{type(e).__name__}: {e}"))
         return None
-
 
 def generate_full_pdf_report():
     buffer = io.BytesIO()
@@ -1060,25 +949,19 @@ def generate_full_pdf_report():
         title="Net Worth & Goal Planner Report",
     )
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('T', parent=styles['Title'], fontSize=18,
-                                  textColor=colors.HexColor('#1e293b'))
-    heading_style = ParagraphStyle('H', parent=styles['Heading2'], fontSize=13,
-                                    textColor=colors.HexColor('#2563eb'), spaceBefore=10, spaceAfter=5)
-    sub_style = ParagraphStyle('S', parent=styles['Heading3'], fontSize=10,
-                                textColor=colors.HexColor('#334155'), spaceBefore=6, spaceAfter=3)
+    title_style = ParagraphStyle('T', parent=styles['Title'], fontSize=18, textColor=colors.HexColor('#1e293b'))
+    heading_style = ParagraphStyle('H', parent=styles['Heading2'], fontSize=13, textColor=colors.HexColor('#2563eb'), spaceBefore=10, spaceAfter=5)
+    sub_style = ParagraphStyle('S', parent=styles['Heading3'], fontSize=10, textColor=colors.HexColor('#334155'), spaceBefore=6, spaceAfter=3)
     normal_style = ParagraphStyle('N', parent=styles['Normal'], fontSize=9, leading=13)
-    caption_style = ParagraphStyle('C', parent=styles['Normal'], fontSize=7,
-                                    textColor=colors.HexColor('#64748b'))
+    caption_style = ParagraphStyle('C', parent=styles['Normal'], fontSize=7, textColor=colors.HexColor('#64748b'))
 
     story = []
-    chart_errors = []  # collects (chart_name, error_message) for any failed chart render
+    chart_errors = []
 
-    # ── Cover ──
     story.append(Paragraph("Net Worth &amp; Goal Planner — Full Report", title_style))
     story.append(Paragraph(f"Generated: {date.today().strftime('%d %b %Y')}", caption_style))
     story.append(Spacer(1, 14))
 
-    # ── DASHBOARD ──
     story.append(Paragraph("Dashboard", heading_style))
     story.append(Paragraph(
         f"<b>Total Net Worth:</b> {fmt(total_net_worth())} &nbsp;&nbsp; "
@@ -1127,49 +1010,35 @@ def generate_full_pdf_report():
 
     if st.session_state.goals:
         story.append(Paragraph("Goal Summary", sub_style))
-        alloc_map = {g["name"]: g for g in smart_allocation()}
-        ai        = avg_inflation()
-        tnw       = total_net_worth()
-        eq_pct    = sum(a["value"] for a in st.session_state.assets if a["asset_class"]=="Equity") / tnw * 100 if tnw > 0 else 0
-        wcagr_pct = weighted_cagr()
-        wcagr     = wcagr_pct / 100
-        projs     = goal_projections()
-
-        remaining, prev_start, last_yr = None, 0, 0
-        today_value_by_goal = {}
-        for g in projs:
-            yr    = goal_start_year(g)
-            gname = g.get("name","") or "(unnamed)"
-            cost  = alloc_map.get(gname, {}).get("display_cost",
-                    goal_value_at_start(g, wcagr_pct) if goal_uses_cumulative(g) else g.get("inflated_cost", 0))
-            if remaining is None:
-                pool = sum(asset_value_at_year(a, yr, ai) for a in st.session_state.assets)
-            else:
-                gap = yr - prev_start
-                pool = remaining * compound(1, wcagr_pct, gap) if gap > 0 and wcagr_pct > 0 else remaining
-            allocated_future = min(pool, cost)
-            allocated_today  = allocated_future / ((1+wcagr)**yr) if wcagr > 0 and yr > 0 else allocated_future
-            npv_of_cost      = goal_npv(g, wcagr_pct)
-            today_value_by_goal[gname] = (cost, allocated_future, allocated_today, npv_of_cost)
-            remaining, prev_start, last_yr = max(pool - cost, 0), yr, yr
+        alloc_list = smart_allocation()
+        wcagr_pct  = weighted_cagr()
+        wcagr      = wcagr_pct / 100
 
         headers = ["Goal","Start","End","Cumulative Cost","Target Cost","NPV","Alloc. (Today's Value)","% Met","Status"]
         rows = []
         tot_cum = tot_target = tot_npv = tot_alloc_today = 0.0
-        for g in projs:
-            name  = g["name"] or "(unnamed)"
-            alloc = alloc_map.get(name, {})
-            pct   = alloc.get("pct", 0)
-            cost, af, at, npv = today_value_by_goal.get(name, (0,0,0,0))
-            start_cal = g["start_year"] if g["start_year"]>1000 else rel_to_cal(goal_start_year(g))
-            end_cal   = g["end_year"]   if g["end_year"]>1000   else rel_to_cal(goal_end_year(g))
-            freq      = goal_frequency(g)
+        
+        for alloc in alloc_list:
+            name  = alloc["name"] or "(unnamed)"
+            pct   = alloc["pct"]
+            cost  = alloc["display_cost"]
+            at    = alloc["allocated_today"]
+            npv   = goal_npv(alloc, wcagr_pct)
+            
+            start_cal = alloc["start_year"] if alloc["start_year"] > 1000 else rel_to_cal(goal_start_year(alloc))
+            end_cal   = alloc["end_year"]   if alloc["end_year"] > 1000   else rel_to_cal(goal_end_year(alloc))
+            freq      = goal_frequency(alloc)
+            
             rows.append([
                 name, str(start_cal), str(end_cal) if freq>0 or end_cal!=start_cal else "—",
-                fmt(g["cumulative_cost"]), fmt(cost), fmt(npv), fmt(at),
+                fmt(alloc["cumulative_cost"]), fmt(cost), fmt(npv), fmt(at),
                 f"{pct}%", alloc.get("status","—"),
             ])
-            tot_cum += g["cumulative_cost"]; tot_target += cost; tot_npv += npv; tot_alloc_today += at
+            tot_cum += alloc["cumulative_cost"]
+            tot_target += cost
+            tot_npv += npv
+            tot_alloc_today += at
+            
         rows.append(["TOTAL","","", fmt(tot_cum), fmt(tot_target), fmt(tot_npv), fmt(tot_alloc_today), "", ""])
         story.append(_pdf_table(headers, rows))
         story.append(Spacer(1, 10))
@@ -1181,7 +1050,6 @@ def generate_full_pdf_report():
             story.append(Paragraph(f"• <b>{rtitle}</b> — {text}", normal_style))
     story.append(PageBreak())
 
-    # ── INCOME & EXPENSES ──
     story.append(Paragraph("Income &amp; Expenses", heading_style))
     if st.session_state.income or st.session_state.expenses:
         ie_img = _fig_to_pdf_image(expense_income_chart(), width_cm=25, height_cm=9, name="Income vs Expenses", errors=chart_errors)
@@ -1207,7 +1075,6 @@ def generate_full_pdf_report():
         story.append(_pdf_table(headers, rows))
     story.append(PageBreak())
 
-    # ── GOALS ──
     story.append(Paragraph("Financial Goals", heading_style))
     if st.session_state.goals:
         proj = goal_projections()
@@ -1226,7 +1093,6 @@ def generate_full_pdf_report():
         story.append(_pdf_table(headers, rows))
     story.append(PageBreak())
 
-    # ── ASSETS ──
     story.append(Paragraph("Asset Portfolio", heading_style))
     story.append(Paragraph(
         f"<b>Total:</b> {fmt_full(total_net_worth())} &nbsp;&nbsp; "
@@ -1268,7 +1134,6 @@ def generate_full_pdf_report():
         story.append(_pdf_table(headers, rows, font_size=6.5))
     story.append(PageBreak())
 
-    # ── RETIREMENT ──
     story.append(Paragraph("Retirement Corpus Drawdown", heading_style))
     ret_corpus = float(st.session_state.get("ret_opening_corpus", 0) or 0)
     ret_goal   = st.session_state.get("ret_goal_name", "")
@@ -1306,7 +1171,6 @@ def generate_full_pdf_report():
             story.append(ret_img)
             story.append(Spacer(1, 8))
 
-        # Annual summary table (aggregated from quarters, keeps PDF compact)
         annual = {}
         for r in rows_sim:
             yr = r["Quarter"].split(" ")[0]
@@ -1345,9 +1209,6 @@ def generate_full_pdf_report():
     buffer.seek(0)
     return buffer.getvalue(), chart_errors
 
-
-
-# ── Full-width header bar ──
 def get_logo_b64():
     logo_path = os.path.join(os.path.dirname(__file__), "shiftgaze_logo.jpg")
     if os.path.exists(logo_path):
@@ -1511,11 +1372,9 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
                           "ret_opening_corpus","ret_goal_name","ret_annual_return",
                           "ret_tax_class","ret_custom_tax","ret_q_withdrawal","ret_w_inflation"]:
                     if k in d: st.session_state[k] = d[k]
-                # Clear cache so projections recalculate with new data
                 _asset_value_at_year_cached.clear()
                 _compound_cached.clear()
                 _goal_occurrences_cached.clear()
-                # Bump version so data_editor widgets get fresh keys (forces clean rebuild)
                 st.session_state.data_version += 1
                 st.rerun()
     with rc:
@@ -1603,7 +1462,7 @@ with tab_dash:
             alloc_sorted = sorted(alloc, key=lambda g: g["display_cost"], reverse=True)
         elif sort_choice == "% Completion (Highest First)":
             alloc_sorted = sorted(alloc, key=lambda g: g["pct"], reverse=True)
-        else:  # Not Started First
+        else:
             alloc_sorted = sorted(alloc, key=lambda g: g["pct"])
 
         tiles_html = '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(270px, 1fr)); gap:14px; margin-top:10px;">'
@@ -1615,10 +1474,6 @@ with tab_dash:
             freq_str = f" · every {freq}yr" if freq > 0 else " · one-time"
             yr_str = f"Yr {g['start_year']}–{g['end_year']}{freq_str}" if freq > 0 else f"Yr {g['start_year']}"
 
-            # Built on ONE line deliberately — a multi-line triple-quoted string here
-            # would carry this loop's Python indentation into the HTML, and Markdown
-            # treats any line starting with 4+ spaces as a code block instead of
-            # parsing it as HTML (which is exactly what broke every tile after the first).
             tile = (
                 f'<div style="background:#1e293b; border-radius:10px; padding:14px 16px; border:1px solid #334155;">'
                 f'<div style="font-weight:700; font-size:14px; color:#fff; margin-bottom:2px;">{g["name"]}</div>'
@@ -1656,7 +1511,6 @@ with tab_dash:
         for icon,title,text in recs:
             st.markdown(f"**{icon} {title}** — {text}")
 
-    # ── Goal Summary Table ──
     if st.session_state.goals:
         st.markdown("### Goal Summary")
         st.caption(
@@ -1666,70 +1520,33 @@ with tab_dash:
             "keeps growing at your portfolio's CAGR while being drawn down (the same principle "
             "the Retirement tab's drawdown simulation uses)."
         )
-        alloc_map = {g["name"]: g for g in smart_allocation()}
-        ai        = avg_inflation()
-        tnw       = total_net_worth()
-        prof      = risk_profile()
-        eq_pct    = sum(a["value"] for a in st.session_state.assets if a["asset_class"]=="Equity") / tnw * 100 if tnw > 0 else 0
-        wcagr_pct = weighted_cagr()
-        wcagr     = wcagr_pct / 100
-
-        # ── Run the FIFO chain ONCE: gives allocated-in-today's-money and
-        #    lets us discount each goal's target cost back to today (NPV) ──
-        projs = goal_projections()
-        remaining = None
-        prev_start = 0
-        last_yr = 0
-        today_value_by_goal = {}   # name -> (cost, allocated_future, allocated_today, npv_of_cost)
-        for g in projs:
-            yr    = goal_start_year(g)
-            gname = g.get("name", "") or "(unnamed)"
-            cost  = alloc_map.get(gname, {}).get("display_cost",
-                    goal_value_at_start(g, wcagr_pct) if goal_uses_cumulative(g) else g.get("inflated_cost", 0))
-
-            if remaining is None:
-                pool = sum(asset_value_at_year(a, yr, ai) for a in st.session_state.assets)
-            else:
-                gap  = yr - prev_start
-                pool = remaining * compound(1, wcagr_pct, gap) if gap > 0 and wcagr_pct > 0 else remaining
-
-            allocated_future = min(pool, cost)
-            allocated_today = allocated_future / ((1 + wcagr) ** yr) if wcagr > 0 and yr > 0 else allocated_future
-            # NPV: correctly discount EACH occurrence individually and sum —
-            # NOT the nominal cumulative total discounted by a single year factor
-            # (that would overstate NPV several-fold for multi-year recurring goals)
-            npv_of_cost = goal_npv(g, wcagr_pct)
-
-            today_value_by_goal[gname] = (cost, allocated_future, allocated_today, npv_of_cost)
-
-            remaining  = max(pool - cost, 0)
-            prev_start = yr
-            last_yr    = yr
-
-        remaining_future = remaining if remaining is not None else 0
-        surplus_today = remaining_future / ((1 + wcagr) ** last_yr) if wcagr > 0 and last_yr > 0 else remaining_future
+        alloc_list       = smart_allocation()
+        ai               = avg_inflation()
+        tnw              = total_net_worth()
+        eq_pct           = sum(a["value"] for a in st.session_state.assets if a["asset_class"]=="Equity") / tnw * 100 if tnw > 0 else 0
+        wcagr_pct        = weighted_cagr()
+        wcagr            = wcagr_pct / 100
 
         summary_rows = []
         tot_cumulative = tot_target = tot_npv = tot_allocated_today = tot_contrib = 0.0
         tot_allocated = 0.0
         fully_funded_count = 0
-        for g in projs:
-            name  = g["name"] or "(unnamed)"
-            alloc = alloc_map.get(name, {})
-            pct   = alloc.get("pct", 0)
-            cost, allocated_future, allocated_today, npv_of_cost = today_value_by_goal.get(
-                name, (alloc.get("display_cost", g["cumulative_cost"]), 0, 0, 0))
-            allocated = alloc.get("allocated", 0)
-            gap   = max(cost - allocated, 0)
 
-            # Additional annual contribution needed to close the gap
-            years_left = max(goal_start_year(g), 1)
+        for alloc in alloc_list:
+            name  = alloc["name"] or "(unnamed)"
+            pct   = alloc["pct"]
+            cost  = alloc["display_cost"]
+            allocated       = alloc["allocated"]
+            allocated_today = alloc["allocated_today"]
+            npv_of_cost     = goal_npv(alloc, wcagr_pct)
+            gap             = max(cost - allocated, 0)
+
+            years_left = max(goal_start_year(alloc), 1)
             if wcagr > 0 and years_left > 0:
                 annual_contrib = gap * wcagr / ((1 + wcagr) ** years_left - 1) if ((1 + wcagr) ** years_left - 1) > 0 else gap / years_left
             else:
                 annual_contrib = gap / years_left if years_left > 0 else gap
 
-            # Recommendation logic
             if pct >= 100:
                 rec = "✅ On track — maintain current allocation"
                 fully_funded_count += 1
@@ -1739,38 +1556,37 @@ with tab_dash:
                     tips.append("increase equity allocation for higher long-term growth")
                 if gap > 0 and annual_contrib > 0:
                     tips.append(f"invest {fmt(annual_contrib)} more per year")
-                tagged = alloc.get("tagged_assets", [])
-                if not tagged:
+                if not alloc.get("tagged_assets"):
                     tips.append("tag assets to this goal for better tracking")
                 if ai > weighted_cagr():
                     tips.append("inflation exceeds portfolio returns — consider higher-growth assets")
                 rec = "; ".join(tips).capitalize() if tips else "Review asset allocation"
 
-            start_cal = g["start_year"] if g["start_year"] > 1000 else rel_to_cal(goal_start_year(g))
-            end_cal   = g["end_year"]   if g["end_year"]   > 1000 else rel_to_cal(goal_end_year(g))
-            freq      = goal_frequency(g)
+            start_cal = alloc["start_year"] if alloc["start_year"] > 1000 else rel_to_cal(goal_start_year(alloc))
+            end_cal   = alloc["end_year"]   if alloc["end_year"]   > 1000 else rel_to_cal(goal_end_year(alloc))
+            freq      = goal_frequency(alloc)
+
             summary_rows.append({
                 "Goal":                              name,
                 "Start":                             str(start_cal),
                 "End":                               str(end_cal) if freq > 0 or end_cal != start_cal else "—",
-                "Cumulative Cost":                   fmt(g["cumulative_cost"]),
+                "Cumulative Cost":                   fmt(alloc["cumulative_cost"]),
                 "Target Cost (Used)":                fmt(cost),
                 "Net Present Value":                 fmt(npv_of_cost),
                 "Allocated from Current Corpus":     fmt(allocated_today),
                 "% Met":                             f"{pct}%",
-                "Status":                            alloc.get("status", "—"),
+                "Status":                            alloc["status"],
                 "Current Add'l Contribution Required": fmt(annual_contrib) if gap > 0 else "—",
                 "Recommendation":                    rec,
             })
 
-            tot_cumulative       += g["cumulative_cost"]
+            tot_cumulative       += alloc["cumulative_cost"]
             tot_target           += cost
             tot_npv              += npv_of_cost
             tot_allocated_today  += allocated_today
             tot_allocated        += allocated
             tot_contrib          += annual_contrib if gap > 0 else 0
 
-        # ── Total row ──
         overall_pct = round((tot_allocated / tot_target) * 100) if tot_target > 0 else 0
         summary_rows.append({
             "Goal":                              "TOTAL",
@@ -1781,29 +1597,20 @@ with tab_dash:
             "Net Present Value":                 fmt(tot_npv),
             "Allocated from Current Corpus":     fmt(tot_allocated_today),
             "% Met":                             f"{overall_pct}%",
-            "Status":                            f"{fully_funded_count}/{len(projs)} Fully Funded",
+            "Status":                            f"{fully_funded_count}/{len(alloc_list)} Fully Funded",
             "Current Add'l Contribution Required": fmt(tot_contrib) if tot_contrib > 0 else "—",
             "Recommendation":                    "—",
         })
 
         st.dataframe(summary_rows, width="stretch", hide_index=True)
 
-        # ── Surplus / Shortfall Banner ──
-        alloc_list       = list(alloc_map.values())
         all_fully_funded = len(alloc_list) > 0 and all(g.get("pct", 0) >= 100 for g in alloc_list)
         total_cost_all   = sum(g.get("display_cost", 0) for g in alloc_list)
 
-        # ── Data quality warnings (shown before surplus) ──
-        zero_cagr_val = sum(a.get("value",0) for a in st.session_state.assets
-                            if (a.get("cagr") or 0) == 0)
+        zero_cagr_val = sum(a.get("value",0) for a in st.session_state.assets if (a.get("cagr") or 0) == 0)
         recurring_goals = [g for g in goal_projections() if goal_frequency(g) > 0]
-        # A goal spanning multiple years (End > Start) but Frequency=0 is almost
-        # always a data-entry mistake — it silently behaves as a ONE-TIME payment
-        # at the start year, ignoring the whole span, which drastically understates
-        # its true cost. Retirement is the classic case: Start 2027, End 2053, but
-        # if Frequency is left at 0 it only funds a single year's expense.
-        suspect_goals = [g for g in goal_projections()
-                         if goal_frequency(g) == 0 and goal_end_year(g) > goal_start_year(g)]
+        suspect_goals = [g for g in goal_projections() if goal_frequency(g) == 0 and goal_end_year(g) > goal_start_year(g)]
+        
         if zero_cagr_val > 0 or recurring_goals or suspect_goals:
             with st.expander("⚠️ Data Quality Warnings — may affect surplus accuracy", expanded=True):
                 if suspect_goals:
@@ -1839,6 +1646,8 @@ with tab_dash:
                     )
 
         st.markdown("---")
+        surplus_today = calculate_surplus_today()
+        
         if all_fully_funded and surplus_today > 0:
             st.markdown(
                 f'<div style="background:linear-gradient(135deg,#059669,#047857); '
@@ -1889,7 +1698,6 @@ with tab_dash:
                 unsafe_allow_html=True,
             )
 
-    # ── Feedback ──
     FEEDBACK_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbwSEyeDApgHgM71xmef4tryXR9M-jP2Hi9njW8QB_mbBKnWnA4NSE_DJSvU7caAQOTX/exec"
 
     st.markdown("---")
@@ -1906,23 +1714,12 @@ with tab_dash:
         fb_text = st.text_input("Comments (optional)", key=f"v{_v}_fb_text",
             label_visibility="collapsed", placeholder="Any comments or feature requests?")
     if st.button("Submit Feedback", key=f"v{_v}_fb_submit"):
-        # ── Payload boundary — audit this if you're checking what gets sent ──
-        # This dict is deliberately built from ONLY the two feedback widgets above
-        # (`rating`, `fb_text`) plus a timestamp. It never reads st.session_state.income,
-        # .expenses, .goals, .assets, or any other financial field — so no matter what a
-        # person has entered elsewhere in the app, none of it can end up in this payload.
         feedback_payload = {
             "rating":  rating,
             "comment": fb_text,
             "ts":      datetime.now().isoformat(),
         }
         try:
-            # Google Apps Script's flow: the initial POST triggers doPost() and
-            # actually writes the row — that part completes on this first call.
-            # Google then redirects to a separate URL that just serves back the
-            # response content; that redirect target only accepts GET, so the
-            # follow-up request must switch methods (POSTing to it, as we did
-            # before, gets rejected with 405 even though the write succeeded).
             resp = requests.post(FEEDBACK_WEBHOOK_URL, json=feedback_payload,
                                   timeout=8, allow_redirects=False)
             hops = 0
@@ -1975,7 +1772,6 @@ with tab_inc_exp:
                         _asset_value_at_year_cached.clear(); _compound_cached.clear()
                         st.rerun()
 
-    # ── Fast batch editor ──
     inc_df = pd.DataFrame([{
         "Source":       inc.get("name", ""),
         "Monthly":      fmt_full(inc.get("monthly", 0) or 0),
@@ -2003,8 +1799,6 @@ with tab_inc_exp:
     st.caption("Edits above are staged in the table — nothing recalculates until you click Apply.")
     apply_inc = st.button("✅ Apply Income Changes", key=f"v{_v}_apply_inc", type="primary", use_container_width=True)
 
-    # Sync back to session state — only when Apply is clicked, so typing across
-    # many rows doesn't trigger a full-app recalculation on every keystroke.
     if apply_inc:
         new_inc_state = []
         for _, r in edited_inc.iterrows():
@@ -2012,7 +1806,7 @@ with tab_inc_exp:
             name = "" if pd.isna(raw_name) else str(raw_name).strip()
             raw_monthly = r.get("Monthly", 0)
             monthly = 0 if pd.isna(raw_monthly) else int(parse_amount(str(raw_monthly)))
-            if not name and monthly == 0: continue  # skip ghost/empty rows
+            if not name and monthly == 0: continue
             new_inc_state.append({
                 "name":       name,
                 "monthly":    monthly,
@@ -2099,7 +1893,6 @@ with tab_inc_exp:
         st.rerun()
 
     st.divider()
-    # Projection horizon as calendar years
     st.markdown("**Projection Horizon**")
     ph_cols = st.columns([1.5, 1.5, 3])
     with ph_cols[0]:
@@ -2135,7 +1928,6 @@ with tab_inc_exp:
             row = {"Year": str(cal_y)}; total = 0
             for i, e in enumerate(st.session_state.expenses):
                 k = e["name"] or f"e{i}"
-                # Only show expense if active in this year
                 e_start = int(e.get("start_year", THIS_YEAR) or THIS_YEAR)
                 e_end   = int(e.get("end_year", 2100) or 2100)
                 if cal_y < e_start or cal_y > e_end:
@@ -2148,8 +1940,6 @@ with tab_inc_exp:
                     row[e["name"] or "—"] = fmt_full(round(v)); total += v
             row["Total Expenses"] = fmt(total)
 
-            # Monthly salary (total income) for this year, respecting each
-            # income source's own growth rate and active start/end window
             monthly_salary = 0
             for inc in st.session_state.income:
                 i_start = int(inc.get("start_year", THIS_YEAR) or THIS_YEAR)
@@ -2171,7 +1961,6 @@ with tab_inc_exp:
 with tab_goals:
     st.markdown("### 🎯 Financial Goals")
 
-    # Excel import
     with st.expander("📥 Import Goals from Excel", expanded=False):
         st.caption(
             "Upload an .xlsx file with columns: Goal Name, Cost Today, Inflation %, "
@@ -2196,7 +1985,6 @@ with tab_goals:
                         _asset_value_at_year_cached.clear(); _compound_cached.clear(); _goal_occurrences_cached.clear()
                         st.rerun()
 
-    # Fast batch editor for goals
     goals_df = pd.DataFrame([{
         "Goal Name":       g.get("name", ""),
         "Cost Today":      fmt_full(g.get("current_cost", 0) or 0),
@@ -2285,7 +2073,6 @@ with tab_goals:
             rows.append(row)
         st.dataframe(rows, width="stretch", hide_index=True)
 
-    # ── What assets make up the "Allocated from Current Corpus" figure per goal ──
     if st.session_state.assets and st.session_state.goals:
         st.markdown("### Corpus Composition by Goal")
         st.caption(
@@ -2330,7 +2117,6 @@ with tab_goals:
 # ASSETS
 # ══════════════════════════════════════════════════════
 with tab_assets:
-    # Skip expensive per-asset chart with 62+ assets - shown in Dashboard instead
     if st.session_state.assets and len(st.session_state.assets) <= 15:
         st.plotly_chart(asset_chart(), width="stretch")
 
@@ -2342,7 +2128,6 @@ with tab_assets:
     st.markdown("### 📈 Asset Portfolio")
     st.caption(f"Total: {fmt_full(total_net_worth())} · Weighted CAGR: {weighted_cagr():.1f}%")
 
-    # Excel import
     with st.expander("📥 Import Assets from Excel", expanded=False):
         st.caption(
             "Upload an .xlsx with columns: Asset Name, Asset Type, Class, Purchase Date, Invested Amount, "
@@ -2375,7 +2160,6 @@ with tab_assets:
 
     gnames = goal_names()
 
-    # ── Fast batch editor for all assets ──
     assets_df = pd.DataFrame([{
         "Asset Name":       a.get("name", ""),
         "Asset Type":       a.get("asset_type", ""),
@@ -2423,13 +2207,13 @@ with tab_assets:
 
     if apply_assets:
         new_assets_state = []
-        defaulted_cagr_assets = []  # track (name, class, default_used) for the validation message
+        defaulted_cagr_assets = []
         for _, r in edited_assets.iterrows():
             raw_name = r.get("Asset Name", "")
             name = "" if pd.isna(raw_name) else str(raw_name).strip()
             raw_val = r.get("Current Value", 0)
             val = 0 if pd.isna(raw_val) else int(parse_amount(str(raw_val)))
-            if not name and val == 0: continue  # skip ghost/empty rows from data_editor
+            if not name and val == 0: continue
 
             raw_atype = r.get("Asset Type", "")
             atype = "" if pd.isna(raw_atype) else str(raw_atype).strip()
@@ -2450,9 +2234,6 @@ with tab_assets:
             cagr_is_blank = pd.isna(raw_cagr)
             manual_cagr = 0.0 if cagr_is_blank else float(raw_cagr)
 
-            # CAGR resolution order: (1) auto from maturity info, (2) whatever
-            # the user actually typed — including an explicit 0, (3) only if
-            # truly left blank, fall back to a class-based default.
             if mat > 0 and inv > 0 and mdate:
                 auto = round(calc_asset_cagr(inv, mat, pdate or str(TODAY), mdate), 2)
                 if auto > 0:
@@ -2571,7 +2352,6 @@ with tab_retire:
         selected_goal_name = st.selectbox("Select Goal", goal_options,
             index=default_idx, key=f"v{_v}_ret_goal")
 
-        # Push selected goal name into session state for dashboard
         st.session_state.ret_goal_name = selected_goal_name
 
         tagged_assets  = [a for a in st.session_state.assets if selected_goal_name in (a.get("tagged_goals") or [])]
@@ -2595,7 +2375,6 @@ with tab_retire:
             default_corpus,
             key=f"v{_v}_ret_corpus")
 
-        # Push corpus into session state for dashboard allocation
         st.session_state.ret_opening_corpus = opening_corpus
 
         if tagged_assets:
@@ -2643,7 +2422,6 @@ with tab_retire:
         withdrawal_inflation = st.number_input("Withdrawal Inflation Rate %/yr",
             value=default_winf, min_value=0.0, max_value=20.0, step=0.5, key=f"v{_v}_ret_winf")
 
-        # Persist for PDF export and cross-tab reference
         st.session_state.ret_annual_return = annual_return
         st.session_state.ret_tax_class     = asset_class_for_tax
         st.session_state.ret_custom_tax    = custom_tax
@@ -2660,89 +2438,3 @@ with tab_retire:
 4. Tax deducted from corpus alongside withdrawal
 
 **Formula:**
-```
-Opening Corpus
-− Quarterly Withdrawal
-− Tax on Gain Portion
-+ Return on Remainder
-= Closing Corpus
-```
-**Tax rates:** Equity / Precious Metals: 12.5% · Debt / Property / Other: 30%
-
-Withdrawal inflates every year at your chosen rate.
-        """)
-
-    st.divider()
-
-    if opening_corpus <= 0:
-        st.info("Enter an opening corpus above to see the projection.")
-    elif q_withdrawal <= 0:
-        st.info("Enter a quarterly withdrawal amount to run the simulation.")
-    else:
-        rows, total_withdrawn = retirement_simulation(
-            opening_corpus, annual_return, asset_class_for_tax,
-            q_withdrawal, withdrawal_inflation, effective_tax)
-
-        total_quarters = len(rows)
-        total_years    = total_quarters / 4
-        total_tax      = sum(r["Tax Amount"] for r in rows)
-        total_return   = sum(r["Gross Return"] for r in rows)
-
-        m1,m2,m3,m4 = st.columns(4)
-        m1.metric("Corpus Lasts",        f"{total_years:.1f} yrs ({total_quarters} qtrs)")
-        m2.metric("Total Withdrawn",     fmt(total_withdrawn))
-        m3.metric("Total Tax Paid",      fmt(total_tax))
-        m4.metric("Total Returns Earned",fmt(total_return))
-
-        fig = retirement_drawdown_chart(rows)
-        st.plotly_chart(fig, width="stretch")
-
-        st.markdown("### Quarterly Drawdown Table")
-        view = st.radio("View", ["By Quarter","Annual Summary"], horizontal=True, key=f"v{_v}_ret_view")
-
-        if view == "By Quarter":
-            display_rows = [{
-                "Quarter":        r["Quarter"],
-                "Opening Corpus": fmt_full(round(r["Opening Corpus"])),
-                "Withdrawal":     fmt_full(round(r["Withdrawal"])),
-                "Return %":       r["Return %"],
-                "Gross Return":   fmt_full(round(r["Gross Return"])),
-                "Gain Portion":   fmt_full(round(r["Gain Portion"])),
-                "Tax Rate":       r["Tax Rate"],
-                "Tax Amount":     fmt_full(round(r["Tax Amount"])),
-                "Net Return":     fmt_full(round(r["Net Return"])),
-                "Net Gain (Q)":   fmt_full(round(r["Net Gain"])),
-                "Closing Corpus": fmt_full(round(r["Closing Corpus"])),
-            } for r in rows]
-            st.dataframe(display_rows, width="stretch", hide_index=True, height=450)
-        else:
-            annual = {}
-            for r in rows:
-                yr = r["Quarter"].split(" ")[0]
-                if yr not in annual:
-                    annual[yr] = {"Year":yr.replace("Y","Year "),"Opening Corpus":r["Opening Corpus"],
-                        "Total Withdrawal":0,"Total Gross Return":0,"Total Gain Portion":0,
-                        "Total Tax":0,"Total Net Return":0,"Net Gain":0,"Closing Corpus":0}
-                annual[yr]["Total Withdrawal"]  += r["Withdrawal"]
-                annual[yr]["Total Gross Return"] += r["Gross Return"]
-                annual[yr]["Total Gain Portion"] += r["Gain Portion"]
-                annual[yr]["Total Tax"]          += r["Tax Amount"]
-                annual[yr]["Total Net Return"]   += r["Net Return"]
-                annual[yr]["Net Gain"]           += r["Net Gain"]
-                annual[yr]["Closing Corpus"]      = r["Closing Corpus"]
-            ann_rows = [{
-                "Year":             a["Year"],
-                "Opening Corpus":   fmt_full(round(a["Opening Corpus"])),
-                "Total Withdrawal": fmt_full(round(a["Total Withdrawal"])),
-                "Return %":         f"{annual_return:.1f}%",
-                "Gross Return":     fmt_full(round(a["Total Gross Return"])),
-                "Gain Portion":     fmt_full(round(a["Total Gain Portion"])),
-                "Tax Rate":         f"{(effective_tax or tax_rate_display)*100:.1f}%",
-                "Tax Paid":         fmt_full(round(a["Total Tax"])),
-                "Net Return":       fmt_full(round(a["Total Net Return"])),
-                "Net Gain":         fmt_full(round(a["Net Gain"])),
-                "Closing Corpus":   fmt_full(round(a["Closing Corpus"])),
-            } for a, a in [(yr, data) for yr, data in annual.items()]]
-            st.dataframe(ann_rows, width="stretch", hide_index=True, height=450)
-
-        st.caption(f"Corpus depleted after {total_years:.1f} years · Withdrawn: {fmt(total_withdrawn)} · Tax: {fmt(total_tax)}")
