@@ -428,7 +428,6 @@ def calculate_surplus_today():
         gap_after_tagged = max(cost - tagged_val, 0)
         excess_tagged    = max(tagged_val - cost, 0)
         
-        # Discount the excess tagged back to today and add to a running total
         if excess_tagged > 0:
             total_excess_tagged_today += excess_tagged / ((1 + wcagr) ** yr) if wcagr > 0 and yr > 0 else excess_tagged
 
@@ -442,22 +441,107 @@ def calculate_surplus_today():
 
     untagged_surplus_today = remaining_pool / ((1 + wcagr) ** prev_start) if wcagr > 0 and prev_start > 0 else remaining_pool
     
-    # Total true surplus is the remaining untagged pool PLUS any overfunded tagged amounts
     return untagged_surplus_today + total_excess_tagged_today
 
-def compute_goal_today_values():
-    result = {}
-    for alloc in smart_allocation():
-        gname = alloc["name"] or "(unnamed)"
-        tagged = [a for a in st.session_state.assets if gname in (a.get("tagged_goals") or [])]
-        result[gname] = {
-            "cost":               alloc["display_cost"],
-            "allocated_today":    alloc.get("allocated_today", 0),
-            "pct":                alloc["pct"],
-            "tagged":             tagged,
-            "uses_untagged_pool": alloc.get("untagged_contrib", 0) > 0,
-        }
-    return result
+def compute_granular_asset_allocation():
+    """Generates the asset-level granular allocation table."""
+    ai        = avg_inflation()
+    wcagr_pct = weighted_cagr()
+    wcagr     = wcagr_pct / 100
+    projs     = goal_projections()
+    
+    ret_corpus_rem = float(st.session_state.get("ret_opening_corpus", 0) or 0)
+    ret_goal_name  = st.session_state.get("ret_goal_name", "")
+    
+    # Track the fraction of each asset consumed so far (0.0 to 1.0)
+    asset_consumed = {i: 0.0 for i in range(len(st.session_state.assets))}
+    table_rows = []
+    
+    for g in projs:
+        gname   = g["name"] or "(unnamed)"
+        use_cum = goal_uses_cumulative(g)
+        cost    = goal_value_at_start(g, wcagr_pct) if use_cum else g["inflated_cost"]
+        yr      = g["start_year"]
+        
+        target_today = cost / ((1 + wcagr)**yr) if wcagr > 0 and yr > 0 else cost
+        if target_today <= 0: continue
+        
+        remaining_need = cost
+        
+        # 1. Virtual Ret Corpus
+        if gname == ret_goal_name and ret_corpus_rem > 0:
+            draw = min(remaining_need, ret_corpus_rem)
+            ret_corpus_rem -= draw
+            remaining_need -= draw
+            draw_today = draw / ((1 + wcagr)**yr) if wcagr > 0 and yr > 0 else draw
+            table_rows.append({
+                "Goal": gname,
+                "Asset Name": "Retirement Corpus (Manual)",
+                "Asset Type": "Virtual",
+                "Asset Class": st.session_state.get("ret_tax_class", "Equity"),
+                "How much of the Asset in Asset Name column is allocated": fmt(draw_today),
+                "% of the Asset to total Goal": f"{(draw_today/target_today)*100:.1f}%" if target_today>0 else "0.0%"
+            })
+        
+        # 2. Tagged Assets
+        for i, a in enumerate(st.session_state.assets):
+            if remaining_need <= 0: break
+            if gname and gname in (a.get("tagged_goals") or []):
+                avail_frac = 1.0 - asset_consumed[i]
+                if avail_frac > 0:
+                    val_at_yr = asset_value_at_year(a, yr, ai)
+                    avail_val = val_at_yr * avail_frac
+                    draw = min(remaining_need, avail_val)
+                    if draw > 0:
+                        frac_used = draw / val_at_yr
+                        asset_consumed[i] += frac_used
+                        remaining_need -= draw
+                        draw_today = draw / ((1 + wcagr)**yr) if wcagr > 0 and yr > 0 else draw
+                        table_rows.append({
+                            "Goal": gname,
+                            "Asset Name": a["name"] or "(unnamed)",
+                            "Asset Type": a.get("asset_type", "") or "—",
+                            "Asset Class": a["asset_class"],
+                            "How much of the Asset in Asset Name column is allocated": fmt(draw_today),
+                            "% of the Asset to total Goal": f"{(draw_today/target_today)*100:.1f}%" if target_today>0 else "0.0%"
+                        })
+                        
+        # 3. Untagged Assets
+        for i, a in enumerate(st.session_state.assets):
+            if remaining_need <= 0: break
+            if not (a.get("tagged_goals") or []):
+                avail_frac = 1.0 - asset_consumed[i]
+                if avail_frac > 0:
+                    val_at_yr = asset_value_at_year(a, yr, ai)
+                    avail_val = val_at_yr * avail_frac
+                    draw = min(remaining_need, avail_val)
+                    if draw > 0:
+                        frac_used = draw / val_at_yr
+                        asset_consumed[i] += frac_used
+                        remaining_need -= draw
+                        draw_today = draw / ((1 + wcagr)**yr) if wcagr > 0 and yr > 0 else draw
+                        table_rows.append({
+                            "Goal": gname,
+                            "Asset Name": a["name"] or "(unnamed)",
+                            "Asset Type": a.get("asset_type", "") or "—",
+                            "Asset Class": a["asset_class"],
+                            "How much of the Asset in Asset Name column is allocated": fmt(draw_today),
+                            "% of the Asset to total Goal": f"{(draw_today/target_today)*100:.1f}%" if target_today>0 else "0.0%"
+                        })
+                        
+        # Nothing allocated fallback
+        if remaining_need == cost:
+            table_rows.append({
+                "Goal": gname,
+                "Asset Name": "— None —",
+                "Asset Type": "—",
+                "Asset Class": "—",
+                "How much of the Asset in Asset Name column is allocated": "0",
+                "% of the Asset to total Goal": "0.0%"
+            })
+            
+    return table_rows
+
 
 def expense_coverage_years():
     if not st.session_state.income or not st.session_state.expenses: return None
@@ -2071,44 +2155,15 @@ with tab_goals:
         st.dataframe(rows, width="stretch", hide_index=True)
 
     if st.session_state.assets and st.session_state.goals:
-        st.markdown("### Corpus Composition by Goal")
+        st.markdown("### Granular Asset Allocation by Goal")
         st.caption(
-            "For each goal, the specific asset holdings behind its 'Allocated from Current "
-            "Corpus' figure (same today's-money number shown on the Dashboard). Untagged "
-            "assets are shared across every goal that draws from the pool, so the same "
-            "holding can legitimately appear under more than one goal — tag an asset on the "
-            "Assets tab to earmark it for one goal specifically instead."
+            "A specific breakdown showing precisely which assets are funding each goal, "
+            "and how much of each asset is allocated. Values are displayed in **today's money**. "
+            "Untagged assets are drawn from a shared pool and consumed sequentially."
         )
 
-        today_vals      = compute_goal_today_values()
-        untagged_assets = [a for a in st.session_state.assets if not a.get("tagged_goals")]
-
-        comp_rows = []
-        for gname, info in today_vals.items():
-            contributing = list(info["tagged"])
-            if info["uses_untagged_pool"]:
-                contributing += untagged_assets
-
-            if not contributing:
-                comp_rows.append({
-                    "Goal":                          gname,
-                    "Allocated from Current Corpus": fmt(info["allocated_today"]),
-                    "Asset Name":                     "— none —",
-                    "Asset Type":                     "",
-                    "Asset Class":                    "",
-                    "% Funded":                       f"{info['pct']}%",
-                })
-            else:
-                for a in contributing:
-                    comp_rows.append({
-                        "Goal":                          gname,
-                        "Allocated from Current Corpus": fmt(info["allocated_today"]),
-                        "Asset Name":                     a.get("name") or "(unnamed)",
-                        "Asset Type":                     a.get("asset_type","") or "—",
-                        "Asset Class":                    a.get("asset_class",""),
-                        "% Funded":                       f"{info['pct']}%",
-                    })
-        st.dataframe(comp_rows, width="stretch", hide_index=True)
+        granular_rows = compute_granular_asset_allocation()
+        st.dataframe(granular_rows, width="stretch", hide_index=True)
 
 # ══════════════════════════════════════════════════════
 # ASSETS
