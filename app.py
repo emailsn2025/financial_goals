@@ -568,6 +568,68 @@ def compute_granular_asset_allocation():
         
     return final_rows
 
+def class_mix_chart(granular_rows):
+    mix_data = {}
+    for g_dict in st.session_state.goals:
+        g_name = g_dict["name"] or "(unnamed)"
+        mix_data[g_name] = {"Equity": 0, "Debt": 0, "Property": 0, "Precious Metals": 0, "Other": 0}
+        
+    mix_data["Surplus / Unallocated"] = {"Equity": 0, "Debt": 0, "Property": 0, "Precious Metals": 0, "Other": 0}
+        
+    for row in granular_rows:
+        g = row["Goal"]
+        if g == "TOTAL" or g not in mix_data: continue
+        c = row["Asset Class"]
+        if c == "—": continue
+        amt = parse_amount(row["How much of the Asset in Asset Name column is allocated"])
+        
+        if c in mix_data[g]:
+            mix_data[g][c] += amt
+        else:
+            mix_data[g]["Other"] += amt
+
+    if not mix_data:
+        return None
+
+    goals_list = list(mix_data.keys())
+    classes = ["Equity", "Debt", "Property", "Precious Metals", "Other"]
+    colors_map = {
+        "Equity": "#2563eb",
+        "Debt": "#f97316",
+        "Property": "#059669",
+        "Precious Metals": "#eab308",
+        "Other": "#64748b"
+    }
+    
+    fig_mix = go.Figure()
+    for cls in classes:
+        pcts = []
+        for g in goals_list:
+            total_g = sum(mix_data[g].values())
+            if total_g > 0:
+                pcts.append((mix_data[g][cls] / total_g) * 100)
+            else:
+                pcts.append(0)
+                
+        fig_mix.add_trace(go.Bar(
+            y=goals_list,
+            x=pcts,
+            name=cls,
+            orientation='h',
+            marker=dict(color=colors_map[cls]),
+            hovertemplate="%{y} - " + cls + ": %{x:.1f}%<extra></extra>"
+        ))
+        
+    fig_mix.update_layout(
+        barmode='stack',
+        xaxis=dict(title="Percentage (%)", range=[0, 100]),
+        yaxis=dict(autorange="reversed"),
+        height=max(250, len(goals_list)*40 + 150),
+        margin=dict(l=20, r=20, t=30, b=20),
+        legend=dict(orientation="h", y=-0.2)
+    )
+    return fig_mix
+
 def expense_coverage_years():
     if not st.session_state.income or not st.session_state.expenses: return None
     for y in range(1, 51):
@@ -1209,6 +1271,30 @@ def generate_full_pdf_report():
             str(tot_occurrences), fmt_full(tot_first_payment), fmt_full(tot_total_cost)
         ])
         story.append(_pdf_table(headers, rows))
+
+        # Include Granular Allocation and Class Mix into PDF
+        story.append(Spacer(1, 10))
+        story.append(Paragraph("Class Mix Funding Each Goal", sub_style))
+        granular_rows = compute_granular_asset_allocation()
+        mix_img = _fig_to_pdf_image(class_mix_chart(granular_rows), width_cm=25, height_cm=10, name="Class Mix Chart", errors=chart_errors)
+        if mix_img:
+            story.append(mix_img)
+            story.append(Spacer(1, 10))
+
+        story.append(Paragraph("Corpus Composition by Goal", sub_style))
+        cc_headers = ["Goal", "Asset Name", "Asset Type", "Asset Class", "Allocated (Today)", "% of Goal's Current Funding"]
+        cc_rows = []
+        for r in granular_rows:
+            cc_rows.append([
+                r.get("Goal", ""), 
+                r.get("Asset Name", ""), 
+                r.get("Asset Type", ""), 
+                r.get("Asset Class", ""),
+                r.get("How much of the Asset in Asset Name column is allocated", ""),
+                r.get("% of the Goal's Current Funding", "")
+            ])
+        story.append(_pdf_table(cc_headers, cc_rows, font_size=7))
+        
     story.append(PageBreak())
 
     story.append(Paragraph("Asset Portfolio", heading_style))
@@ -1303,9 +1389,9 @@ def generate_full_pdf_report():
         ann_rows = [[a["Year"], fmt_full(a["Opening"]), fmt_full(a["Withdrawal"]), fmt_full(a["Tax"]),
                      fmt_full(a["Return"]), fmt_full(a["Closing"])] for a in annual.values()]
                      
-        tot_withdrawal = sum(a["Total Withdrawal"] for a in annual.values())
-        tot_tax_amt = sum(a["Total Tax"] for a in annual.values())
-        tot_gross_ret = sum(a["Total Gross Return"] for a in annual.values())
+        tot_withdrawal = sum(a["Withdrawal"] for a in annual.values())
+        tot_tax_amt = sum(a["Tax"] for a in annual.values())
+        tot_gross_ret = sum(a["Return"] for a in annual.values())
         ann_rows.append([
             "TOTAL", "", fmt_full(round(tot_withdrawal)), fmt_full(round(tot_tax_amt)),
             fmt_full(round(tot_gross_ret)), ""
@@ -2250,64 +2336,8 @@ with tab_goals:
         st.markdown("### Class Mix Funding Each Goal")
         
         granular_rows = compute_granular_asset_allocation()
-        
-        mix_data = {}
-        for g_dict in st.session_state.goals:
-            g_name = g_dict["name"] or "(unnamed)"
-            mix_data[g_name] = {"Equity": 0, "Debt": 0, "Property": 0, "Precious Metals": 0, "Other": 0}
-            
-        mix_data["Surplus / Unallocated"] = {"Equity": 0, "Debt": 0, "Property": 0, "Precious Metals": 0, "Other": 0}
-            
-        for row in granular_rows:
-            g = row["Goal"]
-            if g == "TOTAL" or g not in mix_data: continue
-            c = row["Asset Class"]
-            if c == "—": continue
-            amt = parse_amount(row["How much of the Asset in Asset Name column is allocated"])
-            
-            if c in mix_data[g]:
-                mix_data[g][c] += amt
-            else:
-                mix_data[g]["Other"] += amt
-
-        if mix_data:
-            goals_list = list(mix_data.keys())
-            classes = ["Equity", "Debt", "Property", "Precious Metals", "Other"]
-            colors_map = {
-                "Equity": "#2563eb",
-                "Debt": "#f97316",
-                "Property": "#059669",
-                "Precious Metals": "#eab308",
-                "Other": "#64748b"
-            }
-            
-            fig_mix = go.Figure()
-            for cls in classes:
-                pcts = []
-                for g in goals_list:
-                    total_g = sum(mix_data[g].values())
-                    if total_g > 0:
-                        pcts.append((mix_data[g][cls] / total_g) * 100)
-                    else:
-                        pcts.append(0)
-                        
-                fig_mix.add_trace(go.Bar(
-                    y=goals_list,
-                    x=pcts,
-                    name=cls,
-                    orientation='h',
-                    marker=dict(color=colors_map[cls]),
-                    hovertemplate="%{y} - " + cls + ": %{x:.1f}%<extra></extra>"
-                ))
-                
-            fig_mix.update_layout(
-                barmode='stack',
-                xaxis=dict(title="Percentage (%)", range=[0, 100]),
-                yaxis=dict(autorange="reversed"),
-                height=max(250, len(goals_list)*40 + 150),
-                margin=dict(l=20, r=20, t=30, b=20),
-                legend=dict(orientation="h", y=-0.2)
-            )
+        fig_mix = class_mix_chart(granular_rows)
+        if fig_mix:
             st.plotly_chart(fig_mix, width="stretch")
 
         st.markdown("### Corpus Composition by Goal")
