@@ -463,8 +463,7 @@ def compute_granular_asset_allocation():
         cost    = goal_value_at_start(g, wcagr_pct) if use_cum else g["inflated_cost"]
         yr      = g["start_year"]
         
-        target_today = cost / ((1 + wcagr)**yr) if wcagr > 0 and yr > 0 else cost
-        if target_today <= 0: continue
+        if cost <= 0: continue
         
         remaining_need = cost
         
@@ -473,15 +472,19 @@ def compute_granular_asset_allocation():
             draw = min(remaining_need, ret_corpus_rem)
             ret_corpus_rem -= draw
             remaining_need -= draw
-            draw_today = draw / ((1 + wcagr)**yr) if wcagr > 0 and yr > 0 else draw
+            
+            # Discount back using the exact rate it grew at to perfectly reverse the PV
+            ret_rate = float(st.session_state.get("ret_annual_return", 8.0) or 8.0) / 100
+            draw_today = draw / ((1 + ret_rate)**yr) if ret_rate > 0 and yr > 0 else draw
             tot_allocated_all += draw_today
+            
             table_rows.append({
                 "Goal": gname,
                 "Asset Name": "Retirement Corpus (Manual)",
                 "Asset Type": "Virtual",
                 "Asset Class": st.session_state.get("ret_tax_class", "Equity"),
                 "How much of the Asset in Asset Name column is allocated": fmt_full(draw_today),
-                "% of the Asset to total Goal": f"{(draw_today/target_today)*100:.1f}%" if target_today>0 else "0.0%"
+                "% of the Asset to total Goal": f"{(draw / cost)*100:.1f}%"
             })
         
         # 2. Tagged Assets
@@ -497,15 +500,18 @@ def compute_granular_asset_allocation():
                         frac_used = draw / val_at_yr
                         asset_consumed[i] += frac_used
                         remaining_need -= draw
-                        draw_today = draw / ((1 + wcagr)**yr) if wcagr > 0 and yr > 0 else draw
+                        
+                        a_rate = float(a.get("cagr", 0) or 0) / 100
+                        draw_today = draw / ((1 + a_rate)**yr) if a_rate > 0 and yr > 0 else draw
                         tot_allocated_all += draw_today
+                        
                         table_rows.append({
                             "Goal": gname,
                             "Asset Name": a["name"] or "(unnamed)",
                             "Asset Type": a.get("asset_type", "") or "—",
                             "Asset Class": a["asset_class"],
                             "How much of the Asset in Asset Name column is allocated": fmt_full(draw_today),
-                            "% of the Asset to total Goal": f"{(draw_today/target_today)*100:.1f}%" if target_today>0 else "0.0%"
+                            "% of the Asset to total Goal": f"{(draw / cost)*100:.1f}%"
                         })
                         
         # 3. Untagged Assets
@@ -521,17 +527,21 @@ def compute_granular_asset_allocation():
                         frac_used = draw / val_at_yr
                         asset_consumed[i] += frac_used
                         remaining_need -= draw
-                        draw_today = draw / ((1 + wcagr)**yr) if wcagr > 0 and yr > 0 else draw
+                        
+                        a_rate = float(a.get("cagr", 0) or 0) / 100
+                        draw_today = draw / ((1 + a_rate)**yr) if a_rate > 0 and yr > 0 else draw
                         tot_allocated_all += draw_today
+                        
                         table_rows.append({
                             "Goal": gname,
                             "Asset Name": a["name"] or "(unnamed)",
                             "Asset Type": a.get("asset_type", "") or "—",
                             "Asset Class": a["asset_class"],
                             "How much of the Asset in Asset Name column is allocated": fmt_full(draw_today),
-                            "% of the Asset to total Goal": f"{(draw_today/target_today)*100:.1f}%" if target_today>0 else "0.0%"
+                            "% of the Asset to total Goal": f"{(draw / cost)*100:.1f}%"
                         })
                         
+        # Nothing allocated fallback
         if remaining_need == cost:
             table_rows.append({
                 "Goal": gname,
@@ -548,7 +558,7 @@ def compute_granular_asset_allocation():
             "Asset Name": "",
             "Asset Type": "",
             "Asset Class": "",
-            "How much of the Asset in Asset Name column is allocated": fmt_full(tot_allocated_all),
+            "How much of the Asset in Asset Name column is allocated": fmt_full(round(tot_allocated_all)),
             "% of the Asset to total Goal": ""
         })
             
