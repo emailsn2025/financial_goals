@@ -623,9 +623,9 @@ def class_mix_chart(granular_rows):
     fig_mix.update_layout(
         barmode='stack',
         xaxis=dict(title="Percentage (%)", range=[0, 100]),
-        yaxis=dict(autorange="reversed"),
+        yaxis=dict(autorange="reversed", automargin=True),
         height=max(250, len(goals_list)*40 + 150),
-        margin=dict(l=20, r=20, t=30, b=20),
+        margin=dict(l=220, r=20, t=30, b=20),
         legend=dict(orientation="h", y=-0.2)
     )
     return fig_mix
