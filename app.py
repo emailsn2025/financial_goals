@@ -2234,14 +2234,74 @@ with tab_goals:
         st.dataframe(rows, width="stretch", hide_index=True)
 
     if st.session_state.assets and st.session_state.goals:
-        st.markdown("### Granular Asset Allocation by Goal")
+        st.markdown("### Class Mix Funding Each Goal")
+        
+        granular_rows = compute_granular_asset_allocation()
+        
+        mix_data = {}
+        for g_dict in st.session_state.goals:
+            g_name = g_dict["name"] or "(unnamed)"
+            mix_data[g_name] = {"Equity": 0, "Debt": 0, "Property": 0, "Precious Metals": 0, "Other": 0}
+            
+        for row in granular_rows:
+            g = row["Goal"]
+            if g == "TOTAL" or g not in mix_data: continue
+            c = row["Asset Class"]
+            if c == "—": continue
+            amt = parse_amount(row["How much of the Asset in Asset Name column is allocated"])
+            
+            if c in mix_data[g]:
+                mix_data[g][c] += amt
+            else:
+                mix_data[g]["Other"] += amt
+
+        if mix_data:
+            goals_list = list(mix_data.keys())
+            classes = ["Equity", "Debt", "Property", "Precious Metals", "Other"]
+            colors_map = {
+                "Equity": "#2563eb",
+                "Debt": "#f97316",
+                "Property": "#059669",
+                "Precious Metals": "#eab308",
+                "Other": "#64748b"
+            }
+            
+            fig_mix = go.Figure()
+            for cls in classes:
+                pcts = []
+                for g in goals_list:
+                    total_g = sum(mix_data[g].values())
+                    if total_g > 0:
+                        pcts.append((mix_data[g][cls] / total_g) * 100)
+                    else:
+                        pcts.append(0)
+                        
+                fig_mix.add_trace(go.Bar(
+                    y=goals_list,
+                    x=pcts,
+                    name=cls,
+                    orientation='h',
+                    marker=dict(color=colors_map[cls]),
+                    hovertemplate="%{y} - " + cls + ": %{x:.1f}%<extra></extra>"
+                ))
+                
+            fig_mix.update_layout(
+                barmode='stack',
+                xaxis=dict(title="Percentage (%)", range=[0, 100]),
+                yaxis=dict(autorange="reversed"),
+                height=max(250, len(goals_list)*40 + 150),
+                margin=dict(l=20, r=20, t=30, b=20),
+                legend=dict(orientation="h", y=-0.2)
+            )
+            st.plotly_chart(fig_mix, width="stretch")
+
+        st.markdown("### Corpus Composition by Goal")
         st.caption(
             "A specific breakdown showing precisely which assets are funding each goal, "
             "and how much of each asset is allocated. Values are displayed in **today's money**. "
             "Untagged assets are drawn from a shared pool and consumed sequentially."
         )
 
-        granular_rows = compute_granular_asset_allocation()
         st.dataframe(granular_rows, width="stretch", hide_index=True)
 
 # ══════════════════════════════════════════════════════
