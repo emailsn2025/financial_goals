@@ -1290,9 +1290,9 @@ def generate_full_pdf_report():
         ann_rows = [[a["Year"], fmt_full(a["Opening"]), fmt_full(a["Withdrawal"]), fmt_full(a["Tax"]),
                      fmt_full(a["Return"]), fmt_full(a["Closing"])] for a in annual.values()]
                      
-        tot_withdrawal = sum(a["Total Withdrawal"] for a in annual.values())
-        tot_tax_amt = sum(a["Total Tax"] for a in annual.values())
-        tot_gross_ret = sum(a["Total Gross Return"] for a in annual.values())
+        tot_withdrawal = sum(a["Withdrawal"] for a in annual.values())
+        tot_tax_amt = sum(a["Tax"] for a in annual.values())
+        tot_gross_ret = sum(a["Return"] for a in annual.values())
         ann_rows.append([
             "TOTAL", "", fmt_full(round(tot_withdrawal)), fmt_full(round(tot_tax_amt)),
             fmt_full(round(tot_gross_ret)), ""
