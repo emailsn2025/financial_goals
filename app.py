@@ -236,16 +236,36 @@ _v = st.session_state.data_version
 # COMPUTED VALUES
 # ══════════════════════════════════════════════════════
 
+def get_dashboard_eval_year():
+    base_yr = int(st.session_state.get("proj_start_year", THIS_YEAR))
+    items = st.session_state.income + st.session_state.expenses
+    if not items: return base_yr
+    
+    # Check if there's any active income or expense in the base year
+    active_in_base = any(int(e.get("start_year", base_yr) or base_yr) <= base_yr <= int(e.get("end_year", 2100) or 2100) for e in items)
+    
+    # If nothing is active yet, find the earliest future start year so dashboard doesn't just display zeroes
+    if not active_in_base:
+        future_years = [int(e.get("start_year", base_yr) or base_yr) for e in items if int(e.get("start_year", base_yr) or base_yr) > base_yr]
+        if future_years:
+            return min(future_years)
+            
+    return base_yr
+
 def total_monthly_income():
+    eval_yr = get_dashboard_eval_year()
     return sum(e["monthly"] for e in st.session_state.income
-               if int(e.get("start_year", THIS_YEAR) or THIS_YEAR) <= THIS_YEAR <= int(e.get("end_year", 2100) or 2100))
+               if int(e.get("start_year", eval_yr) or eval_yr) <= eval_yr <= int(e.get("end_year", 2100) or 2100))
+
 def total_monthly_expense():
+    eval_yr = get_dashboard_eval_year()
     return sum(e["monthly"] for e in st.session_state.expenses
-               if int(e.get("start_year", THIS_YEAR) or THIS_YEAR) <= THIS_YEAR <= int(e.get("end_year", 2100) or 2100))
+               if int(e.get("start_year", eval_yr) or eval_yr) <= eval_yr <= int(e.get("end_year", 2100) or 2100))
 
 def avg_inflation():
+    eval_yr = get_dashboard_eval_year()
     active = [e for e in st.session_state.expenses
-              if int(e.get("start_year", THIS_YEAR) or THIS_YEAR) <= THIS_YEAR <= int(e.get("end_year", 2100) or 2100)]
+              if int(e.get("start_year", eval_yr) or eval_yr) <= eval_yr <= int(e.get("end_year", 2100) or 2100)]
     tm = sum(e["monthly"] for e in active)
     if tm == 0: return 6.0
     return sum((e["monthly"]/tm)*e["inflation"] for e in active)
@@ -632,12 +652,13 @@ def class_mix_chart(granular_rows):
 
 def expense_coverage_years():
     if not st.session_state.income or not st.session_state.expenses: return None
+    eval_yr = get_dashboard_eval_year()
     for y in range(1, 51):
-        cal_y = THIS_YEAR + y
+        cal_y = eval_yr + y
         inc = sum(compound(e["monthly"], e.get("growth",5.0), y) for e in st.session_state.income
-                  if int(e.get("start_year", THIS_YEAR) or THIS_YEAR) <= cal_y <= int(e.get("end_year", 2100) or 2100))
+                  if int(e.get("start_year", eval_yr) or eval_yr) <= cal_y <= int(e.get("end_year", 2100) or 2100))
         exp = sum(compound(e["monthly"], e["inflation"], y) for e in st.session_state.expenses
-                  if int(e.get("start_year", THIS_YEAR) or THIS_YEAR) <= cal_y <= int(e.get("end_year", 2100) or 2100))
+                  if int(e.get("start_year", eval_yr) or eval_yr) <= cal_y <= int(e.get("end_year", 2100) or 2100))
         if exp > inc: return y
     return None
 
@@ -887,28 +908,42 @@ def import_expenses_from_excel(uploaded_file):
 
 def expense_income_chart():
     years = list(range(st.session_state.projection_years+1))
+    proj_start = int(st.session_state.get("proj_start_year", THIS_YEAR))
     fig   = go.Figure()
     exp_totals = [0.0]*len(years)
     for i, e in enumerate(st.session_state.expenses):
-        monthly_vals = [compound(e["monthly"], e["inflation"], y) for y in years]
-        if e.get("cumulative", False):
-            vals=[]; running=0
-            for v in monthly_vals: running+=v*12; vals.append(running)
-        else:
-            vals = monthly_vals
+        e_start = int(e.get("start_year", THIS_YEAR) or THIS_YEAR)
+        e_end   = int(e.get("end_year", 2100) or 2100)
+        vals = []
+        for y in years:
+            cal_y = proj_start + y
+            if cal_y < e_start or cal_y > e_end:
+                vals.append(0.0)
+            else:
+                vals.append(compound(e["monthly"], e["inflation"], cal_y - proj_start))
+        
         for j,v in enumerate(vals): exp_totals[j]+=v
         fig.add_trace(go.Scatter(x=years, y=vals, name=e["name"] or f"Expense {i+1}",
             line=dict(color=LINE_COLORS[i%len(LINE_COLORS)], width=2),
             hovertemplate="%{y:,.0f}<extra>%{fullData.name}</extra>"))
+            
     if st.session_state.expenses:
         fig.add_trace(go.Scatter(x=years, y=exp_totals, name="Total Expenses",
             line=dict(color="#dc2626", width=3, dash="dash"),
             hovertemplate="%{y:,.0f}<extra>Total Expenses</extra>"))
+            
     if st.session_state.income:
-        inc = [sum(compound(e["monthly"],e.get("growth",5.0),y) for e in st.session_state.income) for y in years]
+        inc = []
+        for y in years:
+            cal_y = proj_start + y
+            m_sum = sum(compound(e["monthly"], e.get("growth",5.0), cal_y - proj_start) 
+                        for e in st.session_state.income 
+                        if int(e.get("start_year", THIS_YEAR) or THIS_YEAR) <= cal_y <= int(e.get("end_year", 2100) or 2100))
+            inc.append(m_sum)
         fig.add_trace(go.Scatter(x=years, y=inc, name="Total Income",
             line=dict(color="#059669", width=3, dash="dot"),
             hovertemplate="%{y:,.0f}<extra>Total Income</extra>"))
+            
     fig.update_layout(title="Monthly Income vs Expenses", xaxis_title="Year", yaxis_title="Amount",
         hovermode="x unified", template=None, height=400,
         legend=dict(orientation="h", y=-0.15), margin=dict(l=60,r=20,t=50,b=60))
@@ -1130,12 +1165,13 @@ def generate_full_pdf_report():
     story.append(Paragraph(f"Generated: {date.today().strftime('%d %b %Y')}", caption_style))
     story.append(Spacer(1, 14))
 
+    eval_yr = get_dashboard_eval_year()
     story.append(Paragraph("Dashboard", heading_style))
     story.append(Paragraph(
         f"<b>Total Net Worth:</b> {fmt(total_net_worth())} &nbsp;&nbsp; "
-        f"<b>Monthly Income:</b> {fmt(total_monthly_income())} &nbsp;&nbsp; "
-        f"<b>Monthly Expenses:</b> {fmt(total_monthly_expense())} &nbsp;&nbsp; "
-        f"<b>Monthly Surplus:</b> {fmt(monthly_surplus())}", normal_style))
+        f"<b>Monthly Income (Yr {eval_yr}):</b> {fmt(total_monthly_income())} &nbsp;&nbsp; "
+        f"<b>Monthly Expenses (Yr {eval_yr}):</b> {fmt(total_monthly_expense())} &nbsp;&nbsp; "
+        f"<b>Monthly Surplus (Yr {eval_yr}):</b> {fmt(monthly_surplus())}", normal_style))
     story.append(Paragraph(
         f"<b>Weighted CAGR:</b> {weighted_cagr():.1f}% &nbsp;&nbsp; "
         f"<b>Risk Profile:</b> {risk_profile()}", normal_style))
@@ -1639,11 +1675,12 @@ tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_retire = st.tabs(
 # DASHBOARD
 # ══════════════════════════════════════════════════════
 with tab_dash:
+    eval_yr = get_dashboard_eval_year()
     c1,c2,c3,c4 = st.columns(4)
     c1.metric("Total Net Worth",  fmt(total_net_worth()))
-    c2.metric("Monthly Income",   fmt(total_monthly_income()))
-    c3.metric("Monthly Expenses", fmt(total_monthly_expense()))
-    c4.metric("Monthly Surplus",  fmt(monthly_surplus()))
+    c2.metric(f"Monthly Income (Yr {eval_yr})",   fmt(total_monthly_income()))
+    c3.metric(f"Monthly Expenses (Yr {eval_yr})", fmt(total_monthly_expense()))
+    c4.metric(f"Monthly Surplus (Yr {eval_yr})",  fmt(monthly_surplus()))
 
     if st.session_state.income or st.session_state.expenses:
         st.markdown("### Monthly Cash Flow")
@@ -2129,15 +2166,8 @@ with tab_inc_exp:
 
     if st.session_state.expenses:
         st.markdown("### Year-by-Year Expense Breakdown")
-        cum_track  = {(e["name"] or f"e{i}"): 0.0 for i,e in enumerate(st.session_state.expenses)}
         table_data = []
         
-        raw_totals = {e["name"] or f"e{i}": 0.0 for i,e in enumerate(st.session_state.expenses)}
-        raw_totals["Total Expenses"] = 0.0
-        raw_totals["Monthly Salary"] = 0.0
-        raw_totals["Monthly Surplus/Shortage"] = 0.0
-        raw_totals["Annual Surplus/Shortage"] = 0.0
-
         milestones = sorted(set(
             [proj_start] +
             [proj_start + y for y in [1,5,10,15,20,25,30] if proj_start + y <= proj_end] +
@@ -2153,16 +2183,19 @@ with tab_inc_exp:
                 e_end   = int(e.get("end_year", 2100) or 2100)
                 if cal_y < e_start or cal_y > e_end:
                     row[e["name"] or "—"] = "—"; continue
+                
                 if e.get("cumulative"):
-                    for yr in range(y): cum_track[k] += compound(e["monthly"], e["inflation"], yr) * 12
-                    row[e["name"] or "—"] = fmt_full(cum_track[k]); total += cum_track[k]
-                    raw_totals[k] += cum_track[k]
+                    cum_val = 0.0
+                    for yr_cal in range(e_start, cal_y + 1):
+                        yr_idx = yr_cal - proj_start
+                        if yr_idx >= 0:
+                            cum_val += compound(e["monthly"], e["inflation"], yr_idx) * 12
+                    row[e["name"] or "—"] = fmt_full(round(cum_val))
+                    total += cum_val
                 else:
                     v = compound(e["monthly"], e["inflation"], y)
                     row[e["name"] or "—"] = fmt_full(round(v)); total += v
-                    raw_totals[k] += v
             row["Total Expenses"] = fmt_full(total)
-            raw_totals["Total Expenses"] += total
 
             monthly_salary = 0
             for inc in st.session_state.income:
@@ -2177,17 +2210,7 @@ with tab_inc_exp:
             row["Monthly Surplus/Shortage"]   = fmt_full(round(monthly_diff))
             row["Annual Surplus/Shortage"]    = fmt_full(round(monthly_diff * 12))
             
-            raw_totals["Monthly Salary"] += monthly_salary
-            raw_totals["Monthly Surplus/Shortage"] += monthly_diff
-            raw_totals["Annual Surplus/Shortage"] += (monthly_diff * 12)
-            
             table_data.append(row)
-            
-        if table_data:
-            total_row = {"Year": "TOTAL"}
-            for k in raw_totals:
-                total_row[k] = fmt_full(round(raw_totals[k]))
-            table_data.append(total_row)
             
         st.dataframe(table_data, width="stretch", hide_index=True)
 
