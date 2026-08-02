@@ -2359,7 +2359,55 @@ with tab_assets:
     if st.session_state.assets:
         type_pie = asset_type_pie_chart()
         if type_pie:
-            st.plotly_chart(type_pie, width="stretch")
+            col_chart, col_cagr = st.columns([1, 1])
+            with col_chart:
+                st.plotly_chart(type_pie, width="stretch")
+            with col_cagr:
+                tnw_now = total_net_worth()
+                def calc_cls_cagr(target_cls):
+                    subset = [a for a in st.session_state.assets if a["asset_class"] == target_cls] if target_cls else st.session_state.assets
+                    sub_val = sum(a["value"] for a in subset)
+                    if sub_val == 0: return 0.0
+                    return sum((a["value"] / sub_val) * a["cagr"] for a in subset)
+                
+                cagr_all     = calc_cls_cagr(None)
+                cagr_equity  = calc_cls_cagr("Equity")
+                cagr_debt    = calc_cls_cagr("Debt")
+                cagr_prop    = calc_cls_cagr("Property")
+                cagr_metals  = calc_cls_cagr("Precious Metals")
+                cagr_other   = calc_cls_cagr("Other")
+                
+                st.markdown(f"""
+                <div style="background:#1e293b; border-radius:10px; padding:18px 20px; border:1px solid #334155; margin-top:50px;">
+                    <div style="font-weight:700; font-size:16px; color:#fff; margin-bottom:14px; border-bottom:1px solid #334155; padding-bottom:8px;">
+                        Weighted CAGR Breakdown
+                    </div>
+                    <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                        <span style="color:#94a3b8; font-size:14px;">All Assets (Overall)</span>
+                        <span style="color:#38bdf8; font-weight:700; font-size:14px;">{cagr_all:.2f}%</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                        <span style="color:#94a3b8; font-size:14px;">Equity Class Assets</span>
+                        <span style="color:#fff; font-weight:600; font-size:14px;">{cagr_equity:.2f}%</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                        <span style="color:#94a3b8; font-size:14px;">Debt Class Assets</span>
+                        <span style="color:#fff; font-weight:600; font-size:14px;">{cagr_debt:.2f}%</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                        <span style="color:#94a3b8; font-size:14px;">Property Class Assets</span>
+                        <span style="color:#fff; font-weight:600; font-size:14px;">{cagr_prop:.2f}%</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                        <span style="color:#94a3b8; font-size:14px;">Precious Metals Class Assets</span>
+                        <span style="color:#fff; font-weight:600; font-size:14px;">{cagr_metals:.2f}%</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between;">
+                        <span style="color:#94a3b8; font-size:14px;">Other Class Assets</span>
+                        <span style="color:#fff; font-weight:600; font-size:14px;">{cagr_other:.2f}%</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
     st.markdown("### 📈 Asset Portfolio")
     st.caption(f"Total: {fmt_full(total_net_worth())} · Weighted CAGR: {weighted_cagr():.1f}%")
