@@ -152,22 +152,29 @@ def currency_input(label, value, key, **kwargs):
     return parse_amount(raw)
 
 def parse_date(s):
-    if not s or pd.isna(s): return TODAY
+    if pd.isna(s) or not str(s).strip(): return None
     if isinstance(s, date): return s
     s_str = str(s).strip().split(' ')[0].split('T')[0]
     for fmt_str in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y"):
         try: return datetime.strptime(s_str, fmt_str).date()
         except: pass
-    return TODAY
+    return None
+
+def safe_date(d_str):
+    try:
+        return parse_date(d_str)
+    except:
+        return None
 
 def years_between(d1, d2):
+    if not d1 or not d2: return 0
     delta = (d2 - d1).days
     return max(delta / 365.25, 0)
 
 def calc_asset_cagr(invested, maturity_amt, purchase_date_str, maturity_date_str):
     try:
-        pd_  = parse_date(purchase_date_str)
-        md_  = parse_date(maturity_date_str)
+        pd_  = parse_date(purchase_date_str) or TODAY
+        md_  = parse_date(maturity_date_str) or TODAY
         yrs  = years_between(pd_, md_)
         if yrs <= 0 or invested <= 0 or maturity_amt <= 0: return 0.0
         return ((maturity_amt / invested) ** (1 / yrs) - 1) * 100
@@ -175,8 +182,8 @@ def calc_asset_cagr(invested, maturity_amt, purchase_date_str, maturity_date_str
 
 def calc_asset_maturity(principal, cagr, purchase_date_str, maturity_date_str):
     try:
-        pd_  = parse_date(purchase_date_str)
-        md_  = parse_date(maturity_date_str)
+        pd_  = parse_date(purchase_date_str) or TODAY
+        md_  = parse_date(maturity_date_str) or TODAY
         yrs  = years_between(pd_, md_)
         if yrs <= 0 or principal <= 0 or cagr <= 0: return 0.0
         return principal * ((1 + cagr / 100.0) ** yrs)
@@ -328,8 +335,8 @@ for key, default in [
     ("income", []), ("expenses", []), ("goals", []), ("assets", []), ("liabilities", []),
     ("projection_years", 30), ("data_version", 0),
     ("ret_opening_corpus", 0), ("ret_goal_name", ""),
-    ("ret_annual_return", 8.0), ("ret_tax_class", "Equity"),
-    ("ret_custom_tax", 0.0), ("ret_q_withdrawal", 0), ("ret_w_inflation", 6.0),
+    ("ret_annual_return", 9.0), ("ret_tax_class", "Equity"),
+    ("ret_custom_tax", 20.0), ("ret_q_withdrawal", 0), ("ret_w_inflation", 7.0),
     ("proj_start_year", THIS_YEAR), ("proj_end_year", THIS_YEAR + 30),
     ("number_format", "Western"), ("apply_tax_drag", False),
     ("auto_sweep_surplus", False), ("sweep_cagr", 8.0),
@@ -1331,7 +1338,7 @@ def _pdf_table(headers, rows, col_widths=None, font_size=7):
         ('GRID',         (0,0), (-1,-1), 0.4, colors.HexColor('#cbd5e1')),
         ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f1f5f9')]),
         ('VALIGN',       (0,0), (-1,-1), 'MIDDLE'),
-        ('LEPADDING',  (0,0), (-1,-1), 4),
+        ('LEFTPADDING',  (0,0), (-1,-1), 4),
         ('RIGHTPADDING', (0,0), (-1,-1), 4),
         ('TOPPADDING',   (0,0), (-1,-1), 3),
         ('BOTTOMPADDING',(0,0), (-1,-1), 3),
@@ -1631,10 +1638,10 @@ def generate_full_pdf_report():
     ret_goal   = st.session_state.get("ret_goal_name", "")
     ret_qw     = float(st.session_state.get("ret_q_withdrawal", 0) or 0)
     if ret_corpus > 0 and ret_qw > 0:
-        ret_return    = st.session_state.get("ret_annual_return", 8.0)
+        ret_return    = st.session_state.get("ret_annual_return", 9.0)
         ret_tax_class = st.session_state.get("ret_tax_class", "Equity")
-        ret_custom_tax= st.session_state.get("ret_custom_tax", 0.0)
-        ret_winf      = st.session_state.get("ret_w_inflation", 6.0)
+        ret_custom_tax= st.session_state.get("ret_custom_tax", 20.0)
+        ret_winf      = st.session_state.get("ret_w_inflation", 7.0)
         eff_tax = (ret_custom_tax/100) if ret_custom_tax > 0 else None
 
         rows_sim, total_withdrawn = retirement_simulation(
@@ -1854,11 +1861,11 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
             "liabilities": st.session_state.liabilities,
             "ret_opening_corpus": st.session_state.get("ret_opening_corpus", 0),
             "ret_goal_name":      st.session_state.get("ret_goal_name", ""),
-            "ret_annual_return":  st.session_state.get("ret_annual_return", 8.0),
+            "ret_annual_return":  st.session_state.get("ret_annual_return", 9.0),
             "ret_tax_class":      st.session_state.get("ret_tax_class", "Equity"),
-            "ret_custom_tax":     st.session_state.get("ret_custom_tax", 0.0),
+            "ret_custom_tax":     st.session_state.get("ret_custom_tax", 20.0),
             "ret_q_withdrawal":   st.session_state.get("ret_q_withdrawal", 0),
-            "ret_w_inflation":    st.session_state.get("ret_w_inflation", 6.0),
+            "ret_w_inflation":    st.session_state.get("ret_w_inflation", 7.0),
             "apply_tax_drag":     st.session_state.get("apply_tax_drag", False),
             "auto_sweep_surplus": st.session_state.get("auto_sweep_surplus", False),
             "sweep_cagr":         st.session_state.get("sweep_cagr", 8.0),
@@ -1896,11 +1903,11 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
             st.session_state.projection_years = 30
             st.session_state.ret_opening_corpus = 0
             st.session_state.ret_goal_name      = ""
-            st.session_state.ret_annual_return  = 8.0
+            st.session_state.ret_annual_return  = 9.0
             st.session_state.ret_tax_class      = "Equity"
-            st.session_state.ret_custom_tax     = 0.0
+            st.session_state.ret_custom_tax     = 20.0
             st.session_state.ret_q_withdrawal   = 0
-            st.session_state.ret_w_inflation    = 6.0
+            st.session_state.ret_w_inflation    = 7.0
             st.session_state.apply_tax_drag     = False
             st.session_state.auto_sweep_surplus = False
             st.session_state.sweep_cagr         = 8.0
@@ -1967,23 +1974,32 @@ with tab_dash:
         retire_goal = next((g for g in alloc_list if "retire" in (g["name"] or "").lower() or "pension" in (g["name"] or "").lower()), None)
     ret_funded_str = f"{retire_goal['pct']}%" if retire_goal else "N/A"
     
-    r1c1, r1c2, r1c3, r1c4 = st.columns(4)
-    r1c1.metric("Total Assets", fmt(total_assets()))
-    r1c2.metric("Total Liabilities", fmt(total_liabilities()))
-    r1c3.metric("Total Net Worth", fmt(total_net_worth()))
-    r1c4.metric("Goals Fully Funded", goals_met_str)
-
-    r2c1, r2c2, r2c3, r2c4 = st.columns(4)
     annual_inc = total_monthly_income() * 12
     annual_exp = total_monthly_expense() * 12
     annual_sur = monthly_surplus() * 12
-    
-    r2c1.metric(f"Annual Income (Yr {eval_yr})",   fmt(annual_inc))
-    r2c2.metric(f"Annual Expenses (Yr {eval_yr})", fmt(annual_exp))
-    r2c3.metric(f"Annual Surplus (Yr {eval_yr})",  fmt(annual_sur))
-    r2c4.metric("Retirement Corpus Funded", ret_funded_str)
 
-    st.markdown("### Goal Coverage")
+    def make_tile(title, value, subtitle=""):
+        return f'''
+        <div style="background:#1e293b; border-radius:10px; padding:16px 20px; border:1px solid #334155; display:flex; flex-direction:column; justify-content:center;">
+            <div style="color:#94a3b8; font-size:13px; font-weight:600; margin-bottom:4px;">{title}</div>
+            <div style="color:#fff; font-size:24px; font-weight:700;">{value}</div>
+            {f'<div style="color:#64748b; font-size:11px; margin-top:4px;">{subtitle}</div>' if subtitle else ''}
+        </div>
+        '''
+
+    dash_html = '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:14px; margin-bottom:24px;">'
+    dash_html += make_tile("Total Assets", fmt(total_assets()))
+    dash_html += make_tile("Total Liabilities", fmt(total_liabilities()))
+    dash_html += make_tile("Total Net Worth", fmt(total_net_worth()))
+    dash_html += make_tile("Goals Fully Funded", goals_met_str)
+    dash_html += make_tile(f"Annual Income (Yr {eval_yr})", fmt(annual_inc))
+    dash_html += make_tile(f"Annual Expenses (Yr {eval_yr})", fmt(annual_exp))
+    dash_html += make_tile(f"Annual Surplus (Yr {eval_yr})", fmt(annual_sur))
+    dash_html += make_tile("Retirement Corpus Funded", ret_funded_str)
+    dash_html += '</div>'
+    
+    st.markdown(dash_html, unsafe_allow_html=True)
+
     if not alloc_list:
         st.info("Add goals and assets to see allocation.")
     else:
@@ -2050,11 +2066,6 @@ with tab_dash:
                 f'</div></div>',
                 unsafe_allow_html=True,
             )
-            s1, s2, s3, s4 = st.columns(4)
-            s1.metric("Total Assets",      fmt(total_assets()))
-            s2.metric("Total Goal Cost",   fmt(total_cost_all))
-            s3.metric("Weighted CAGR",     f"{weighted_cagr():.1f}%")
-            s4.metric("Surplus (Today's Money)", fmt(surplus_today))
 
         elif all_fully_funded and surplus_today <= 0:
             st.markdown(
@@ -2830,13 +2841,13 @@ with tab_assets:
         "Asset Name":       a.get("name", ""),
         "Asset Type":       a.get("asset_type", ""),
         "Class":            a.get("asset_class", "Equity") if a.get("asset_class") in ASSET_CLASSES else "Equity",
-        "Purchase Date":    a.get("purchase_date", "") or "",
+        "Purchase Date":    safe_date(a.get("purchase_date")),
         "Invested":         fmt_full(a.get("invested", 0) or 0),
         "Current Value":    fmt_full(a.get("value", 0) or 0),
         "Maturity Amount":  fmt_full(a.get("maturity_amt", 0) or 0),
-        "Maturity Date":    a.get("maturity_date", "") or "",
+        "Maturity Date":    safe_date(a.get("maturity_date")),
         "CAGR %":           float(a.get("cagr", 0.0) or 0.0),
-        "Tag Goals":        ", ".join(a.get("tagged_goals") or []),
+        "Tag Goal":         a.get("tagged_goals")[0] if a.get("tagged_goals") else "",
         "SWP Monthly":      fmt_full(a.get("swp_monthly", 0) or 0),
         "SWP Start Yr":     asset_swp_start_display(a),
     } for a in st.session_state.assets])
@@ -2844,7 +2855,7 @@ with tab_assets:
     if assets_df.empty:
         assets_df = pd.DataFrame(columns=[
             "Asset Name", "Asset Type", "Class", "Purchase Date", "Invested", "Current Value",
-            "Maturity Amount", "Maturity Date", "CAGR %", "Tag Goals", "SWP Monthly", "SWP Start Yr"
+            "Maturity Amount", "Maturity Date", "CAGR %", "Tag Goal", "SWP Monthly", "SWP Start Yr"
         ])
 
     edited_assets = st.data_editor(
@@ -2857,13 +2868,13 @@ with tab_assets:
             "Asset Name":      st.column_config.TextColumn("Asset Name", width="medium"),
             "Asset Type":      st.column_config.TextColumn("Asset Type", width="medium", help="e.g. Mutual Fund, FD, PMS, Direct Equity, Sovereign Gold Bond"),
             "Class":           st.column_config.SelectboxColumn("Class", options=ASSET_CLASSES, required=True),
-            "Purchase Date":   st.column_config.TextColumn("Purchase Date", help="DD/MM/YYYY"),
+            "Purchase Date":   st.column_config.DateColumn("Purchase Date", format="YYYY-MM-DD", help="Double click to open calendar"),
             "Invested":        st.column_config.TextColumn("Invested", help="e.g. 1,800,000"),
             "Current Value":   st.column_config.TextColumn("Current Value", help="e.g. 1,800,000"),
             "Maturity Amount": st.column_config.TextColumn("Maturity Amount", help="e.g. 1,800,000"),
-            "Maturity Date":   st.column_config.TextColumn("Maturity Date", help="DD/MM/YYYY"),
+            "Maturity Date":   st.column_config.DateColumn("Maturity Date", format="YYYY-MM-DD", help="Double click to open calendar"),
             "CAGR %":          st.column_config.NumberColumn("Expected Gross CAGR %", format="%.2f", min_value=0.0, max_value=50.0, step=0.5, help="Auto-calculated if maturity info provided"),
-            "Tag Goals":       st.column_config.TextColumn("Tag Goals", help="Comma-separated goal names"),
+            "Tag Goal":        st.column_config.SelectboxColumn("Tag Goal", options=[""] + gnames, help="Select a single goal to tag this asset to"),
             "SWP Monthly":     st.column_config.TextColumn("SWP Monthly", help="e.g. 1,800,000"),
             "SWP Start Yr":    st.column_config.NumberColumn("SWP Start Yr", format="%d", min_value=2000, max_value=2100, help="Calendar year, e.g. 2030"),
         }
@@ -2896,11 +2907,11 @@ with tab_assets:
             raw_mat = r.get("Maturity Amount", 0)
             mat = 0 if pd.isna(raw_mat) else int(parse_amount(str(raw_mat)))
 
-            raw_pdate = r.get("Purchase Date", "")
-            pdate = "" if pd.isna(raw_pdate) else str(raw_pdate).strip()
+            raw_pdate = r.get("Purchase Date")
+            pdate = raw_pdate.strftime("%Y-%m-%d") if pd.notna(raw_pdate) and hasattr(raw_pdate, 'strftime') else ""
 
-            raw_mdate = r.get("Maturity Date", "")
-            mdate = "" if pd.isna(raw_mdate) else str(raw_mdate).strip()
+            raw_mdate = r.get("Maturity Date")
+            mdate = raw_mdate.strftime("%Y-%m-%d") if pd.notna(raw_mdate) and hasattr(raw_mdate, 'strftime') else ""
 
             cls = r.get("Class", "Equity")
             if pd.isna(cls) or cls not in ASSET_CLASSES: cls = "Equity"
@@ -2925,9 +2936,9 @@ with tab_assets:
                 principal = inv if inv > 0 else val
                 mat = int(round(calc_asset_maturity(principal, cagr, pdate or str(TODAY), mdate)))
 
-            raw_tags = r.get("Tag Goals", "")
-            tags_raw = "" if pd.isna(raw_tags) else str(raw_tags).strip()
-            tags = [t.strip() for t in tags_raw.split(",") if t.strip() and t.strip() in gnames]
+            raw_tag = r.get("Tag Goal", "")
+            tag_str = "" if pd.isna(raw_tag) else str(raw_tag).strip()
+            tags = [tag_str] if tag_str and tag_str in gnames else []
 
             raw_swp = r.get("SWP Monthly", 0)
             swp = 0 if pd.isna(raw_swp) else int(parse_amount(str(raw_swp)))
@@ -3161,32 +3172,31 @@ with tab_retire:
         goal_year_rel  = cal_to_rel(selected_goal.get("start_year", THIS_YEAR)) if selected_goal else 0
         ai             = avg_inflation()
 
+        allocs = smart_allocation()
+        selected_goal_alloc = next((g for g in allocs if g["name"] == selected_goal_name), None)
+        target_cost = selected_goal_alloc["display_cost"] if selected_goal_alloc else 0.0
+
         if tagged_assets:
             projected_corpus = sum(asset_value_at_year(a, goal_year_rel, ai) for a in tagged_assets)
             dominant_class   = max(set(a["asset_class"] for a in tagged_assets),
                 key=lambda c: sum(a["value"] for a in tagged_assets if a["asset_class"]==c))
             st.caption(f"🏷️ {len(tagged_assets)} asset(s) tagged · projected at Yr {rel_to_cal(goal_year_rel)}: **{fmt_full(projected_corpus)}** · class: **{dominant_class}**")
         else:
-            projected_corpus = 0.0
             dominant_class   = "Equity"
-            st.caption("No assets tagged to this goal. Enter corpus manually below.")
+            st.caption("No assets tagged to this goal.")
+
+        st.caption(f"🎯 The Target Cost required for this goal is **{fmt_full(target_cost)}**")
 
         saved_corpus = st.session_state.get("ret_opening_corpus", 0) or 0
-        default_corpus = int(saved_corpus) if saved_corpus > 0 else (int(projected_corpus) if projected_corpus > 0 else 0)
+        default_corpus = int(saved_corpus) if saved_corpus > 0 else int(target_cost)
         opening_corpus = currency_input("Opening Corpus (at retirement)",
             default_corpus,
             key=f"v{_v}_ret_corpus")
 
         st.session_state.ret_opening_corpus = opening_corpus
 
-        if tagged_assets:
-            total_val      = sum(a["value"] for a in tagged_assets)
-            suggested_cagr = sum((a["value"]/total_val)*get_asset_eff_cagr(a) for a in tagged_assets) if total_val > 0 else 8.0
-        else:
-            suggested_cagr = 8.0
-
         saved_return = st.session_state.get("ret_annual_return", 0.0) or 0.0
-        default_return = round(saved_return, 1) if saved_return > 0 else round(suggested_cagr, 1)
+        default_return = round(saved_return, 1) if saved_return > 0 else 9.0
         annual_return = st.number_input("Expected Annual Return %",
             value=default_return, min_value=0.0, max_value=30.0, step=0.5,
             key=f"v{_v}_ret_return")
@@ -3204,7 +3214,7 @@ with tab_retire:
             st.caption(f"LTCG tax rate: **{tax_rate_display*100:.1f}%** (based on settings) — on gain portion only")
 
         custom_tax = st.number_input("Override Tax Rate % (0 = use settings)",
-            value=float(st.session_state.get("ret_custom_tax", 0.0) or 0.0),
+            value=float(st.session_state.get("ret_custom_tax", 20.0)),
             min_value=0.0, max_value=50.0, step=0.5, key=f"v{_v}_ret_tax")
         effective_tax = (custom_tax/100) if custom_tax > 0 else None
 
@@ -3223,7 +3233,7 @@ with tab_retire:
             st.caption(f"Suggested: {fmt_full(suggested_qw)} (3× monthly expenses inflated to Yr {rel_to_cal(goal_year_rel)})")
 
         saved_winf = st.session_state.get("ret_w_inflation", 0.0) or 0.0
-        default_winf = round(saved_winf, 1) if saved_winf > 0 else round(ai, 1)
+        default_winf = round(saved_winf, 1) if saved_winf > 0 else 7.0
         withdrawal_inflation = st.number_input("Withdrawal Inflation Rate %/yr",
             value=default_winf, min_value=0.0, max_value=20.0, step=0.5, key=f"v{_v}_ret_winf")
 
