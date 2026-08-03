@@ -215,12 +215,15 @@ def asset_value_at_year(a, target_year, avg_inf=6.0):
     )
 
 # ══════════════════════════════════════════════════════
-# SESSION STATE
+# SESSION STATE & MIGRATION
 # ══════════════════════════════════════════════════════
 
+if "liabilities" in st.session_state and isinstance(st.session_state["liabilities"], (int, float)):
+    st.session_state["liabilities"] = []
+
 for key, default in [
-    ("income", []), ("expenses", []), ("goals", []), ("assets", []),
-    ("projection_years", 30), ("data_version", 0), ("liabilities", 0),
+    ("income", []), ("expenses", []), ("goals", []), ("assets", []), ("liabilities", []),
+    ("projection_years", 30), ("data_version", 0),
     ("ret_opening_corpus", 0), ("ret_goal_name", ""),
     ("ret_annual_return", 8.0), ("ret_tax_class", "Equity"),
     ("ret_custom_tax", 0.0), ("ret_q_withdrawal", 0), ("ret_w_inflation", 6.0),
@@ -231,6 +234,71 @@ for key, default in [
         st.session_state[key] = default
 
 _v = st.session_state.data_version
+
+# ══════════════════════════════════════════════════════
+# LIABILITIES MATH
+# ══════════════════════════════════════════════════════
+
+def calculate_emi(principal, rate_annual, months):
+    p = float(principal)
+    m = int(months)
+    if p <= 0 or m <= 0: return 0.0
+    if rate_annual <= 0: return p / m
+    r = float(rate_annual) / 12.0 / 100.0
+    return p * r * ((1 + r) ** m) / (((1 + r) ** m) - 1)
+
+@st.cache_data(max_entries=1024)
+def liability_value_at_year_cached(principal, rate_annual, emi, months_passed):
+    p = float(principal)
+    r = float(rate_annual) / 12.0 / 100.0
+    e = float(emi)
+    for _ in range(int(months_passed)):
+        if p <= 0: return 0.0
+        interest = p * r
+        principal_payment = e - interest
+        p -= principal_payment
+    return max(p, 0.0)
+
+def liability_value_at_year(l, target_year):
+    p = float(l.get("principal", 0))
+    r = float(l.get("rate", 8.0))
+    m = int(l.get("months", 0))
+    emi = calculate_emi(p, r, m)
+    return liability_value_at_year_cached(p, r, emi, target_year * 12)
+
+def generate_annual_amortization(l):
+    p = float(l.get("principal", 0))
+    rate_annual = float(l.get("rate", 8.0))
+    r = rate_annual / 12.0 / 100.0
+    m = int(l.get("months", 0))
+    emi = calculate_emi(p, rate_annual, m)
+    
+    rows = []
+    curr_p = p
+    year = 1
+    year_interest = 0
+    year_principal = 0
+    
+    for i in range(1, m + 1):
+        interest = curr_p * r
+        prin_pay = emi - interest
+        curr_p -= prin_pay
+        year_interest += interest
+        year_principal += prin_pay
+        
+        if i % 12 == 0 or i == m:
+            rows.append({
+                "Year": f"Year {year}",
+                "EMI Paid": fmt_full(year_interest + year_principal),
+                "Principal Paid": fmt_full(year_principal),
+                "Interest Paid": fmt_full(year_interest),
+                "Remaining Balance": fmt_full(max(curr_p, 0))
+            })
+            year += 1
+            year_interest = 0
+            year_principal = 0
+            
+    return rows, emi
 
 # ══════════════════════════════════════════════════════
 # COMPUTED VALUES
@@ -268,9 +336,13 @@ def avg_inflation():
     if tm == 0: return 6.0
     return sum((e["monthly"]/tm)*e["inflation"] for e in active)
 
-def total_assets():     return sum(a["value"] for a in st.session_state.assets)
-def total_net_worth():  return total_assets() - st.session_state.get("liabilities", 0)
-def monthly_surplus():  return total_monthly_income() - total_monthly_expense()
+def total_assets():       return sum(a["value"] for a in st.session_state.assets)
+def total_liabilities():  return sum(float(l.get("principal", 0)) for l in st.session_state.liabilities)
+def total_net_worth():    return total_assets() - total_liabilities()
+def monthly_surplus():    return total_monthly_income() - total_monthly_expense()
+
+def liabilities_at_year(y):
+    return sum(liability_value_at_year(l, y) for l in st.session_state.liabilities)
 
 def weighted_cagr():
     ta = total_assets()
@@ -998,10 +1070,10 @@ def asset_type_pie_chart():
 def nw_bar_chart():
     max_y = max(30, max((goal_end_year(g) for g in st.session_state.goals), default=30))
     years = list(range(0, max_y+1, 5))
-    vals  = [portfolio_at_year(y) - st.session_state.get("liabilities", 0) for y in years]
+    vals  = [max(portfolio_at_year(y) - liabilities_at_year(y), 0) for y in years]
     fig   = go.Figure(go.Bar(x=[f"Yr {y}" for y in years], y=vals,
         marker_color="#2563eb", hovertemplate="%{y:,.0f}<extra></extra>"))
-    fig.update_layout(title="Net Worth Projection (net of SWP & Liabilities)", template=None, height=350,
+    fig.update_layout(title="Net Worth Projection (Assets - Liabilities)", template=None, height=350,
         margin=dict(l=60,r=20,t=50,b=40), yaxis_title="Amount")
     return fig
 
@@ -1163,7 +1235,7 @@ def generate_full_pdf_report():
     story.append(Paragraph("Dashboard", heading_style))
     story.append(Paragraph(
         f"<b>Total Assets:</b> {fmt(total_assets())} &nbsp;&nbsp; "
-        f"<b>Total Liabilities:</b> {fmt(st.session_state.get('liabilities', 0))} &nbsp;&nbsp; "
+        f"<b>Total Liabilities:</b> {fmt(total_liabilities())} &nbsp;&nbsp; "
         f"<b>Total Net Worth:</b> {fmt(total_net_worth())}", normal_style))
     story.append(Paragraph(
         f"<b>Monthly Income (Yr {eval_yr}):</b> {fmt(total_monthly_income())} &nbsp;&nbsp; "
@@ -1370,6 +1442,25 @@ def generate_full_pdf_report():
         story.append(_pdf_table(headers, rows, font_size=6.5))
     story.append(PageBreak())
 
+    if st.session_state.liabilities:
+        story.append(Paragraph("Liabilities & Loans", heading_style))
+        story.append(Paragraph(f"<b>Total Outstanding Principal:</b> {fmt_full(total_liabilities())}", normal_style))
+        story.append(Spacer(1, 6))
+        
+        headers = ["Loan Name", "Outstanding Principal", "Interest Rate %", "Remaining Months", "Calculated EMI"]
+        rows = []
+        for l in st.session_state.liabilities:
+            emi = calculate_emi(l["principal"], l["rate"], l["months"])
+            rows.append([
+                l["name"] or "—", 
+                fmt_full(l["principal"]), 
+                f'{l["rate"]}%', 
+                str(l["months"]), 
+                fmt_full(emi)
+            ])
+        story.append(_pdf_table(headers, rows))
+        story.append(PageBreak())
+
     story.append(Paragraph("Retirement Corpus Drawdown", heading_style))
     ret_corpus = float(st.session_state.get("ret_opening_corpus", 0) or 0)
     ret_goal   = st.session_state.get("ret_goal_name", "")
@@ -1543,7 +1634,10 @@ it; untagged assets form a shared pool that fills any remaining gaps. Set up a s
 plan (SWP) on an asset if it's already being drawn down. Pie charts break your portfolio down by
 Class and by Type.
 
-<br/><br/><b style="color:#93c5fd;">Step 4 — Retirement</b><br/>
+<br/><br/><b style="color:#93c5fd;">Step 4 — Liabilities</b><br/>
+Enter your outstanding loans, interest rates, and remaining tenure. The app calculates your exact monthly EMI to display an amortization schedule, and properly deducts the principal burndown from your projected Net Worth over time. <i style="color:#a5b4fc;">Note: Continue logging your actual EMI payments in the Expenses tab to keep your monthly cashflow accurate.</i>
+
+<br/><br/><b style="color:#93c5fd;">Step 5 — Retirement</b><br/>
 Select your retirement goal — the corpus, return rate, and withdrawal amount are pre-filled from
 whatever assets you've tagged to it. The tab runs a real quarter-by-quarter drawdown simulation:
 each withdrawal is taxed only on its gain portion (12.5% for equity-type assets, 30% for
@@ -1587,6 +1681,7 @@ with fmt_toggle_cols[1]:
 
 with st.expander("💾 Save & Load Your Data", expanded=False):
     st.caption("Your data resets when you close this tab. Download to keep it safe.")
+    st.markdown('<div style="color: #ef4444; font-weight: bold; margin-bottom: 10px;">⚠️ Reminder: Please download your data before you end the session, as it will not be saved!</div>', unsafe_allow_html=True)
     sc, lc, rc = st.columns(3)
     with sc:
         st.download_button("⬇️ Download My Data",
@@ -1594,7 +1689,7 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
                 "income":st.session_state.income, "expenses":st.session_state.expenses,
                 "projection_years":st.session_state.projection_years,
                 "goals":st.session_state.goals, "assets":st.session_state.assets,
-                "liabilities": st.session_state.get("liabilities", 0),
+                "liabilities": st.session_state.liabilities,
                 "ret_opening_corpus": st.session_state.get("ret_opening_corpus", 0),
                 "ret_goal_name":      st.session_state.get("ret_goal_name", ""),
                 "ret_annual_return":  st.session_state.get("ret_annual_return", 8.0),
@@ -1614,10 +1709,14 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
         if st.session_state.get("_pending_load"):
             if st.button("✅ Apply Loaded Data", use_container_width=True, type="primary"):
                 d = st.session_state.pop("_pending_load")
-                for k in ["income","expenses","goals","assets","projection_years","liabilities",
+                for k in ["income","expenses","goals","assets","liabilities","projection_years",
                           "ret_opening_corpus","ret_goal_name","ret_annual_return",
                           "ret_tax_class","ret_custom_tax","ret_q_withdrawal","ret_w_inflation"]:
-                    if k in d: st.session_state[k] = d[k]
+                    if k in d:
+                        if k == "liabilities" and isinstance(d[k], (int, float)):
+                            st.session_state[k] = []
+                        else:
+                            st.session_state[k] = d[k]
                 _asset_value_at_year_cached.clear()
                 _compound_cached.clear()
                 _goal_occurrences_cached.clear()
@@ -1625,9 +1724,8 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
                 st.rerun()
     with rc:
         if st.button("🔄 Reset to Empty", use_container_width=True):
-            for k in ["income","expenses","goals","assets"]: st.session_state[k] = []
+            for k in ["income","expenses","goals","assets","liabilities"]: st.session_state[k] = []
             st.session_state.projection_years = 30
-            st.session_state.liabilities = 0
             st.session_state.ret_opening_corpus = 0
             st.session_state.ret_goal_name      = ""
             st.session_state.ret_annual_return  = 8.0
@@ -1638,7 +1736,8 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
             st.session_state.data_version += 1; st.rerun()
 
 with st.expander("📄 Export All Tabs to PDF", expanded=False):
-    st.caption("Generates a single PDF covering Dashboard, Income & Expenses, Goals, Assets, and Retirement.")
+    st.caption("Generates a single PDF covering Dashboard, Income & Expenses, Goals, Assets, Liabilities, and Retirement.")
+    st.markdown('<div style="color: #ef4444; font-weight: bold; margin-bottom: 10px;">⚠️ Reminder: Please download your PDF report before you end the session!</div>', unsafe_allow_html=True)
     if st.button("📄 Generate PDF Report", use_container_width=True, type="primary"):
         with st.spinner("Building PDF..."):
             try:
@@ -1666,21 +1765,13 @@ with st.expander("📄 Export All Tabs to PDF", expanded=False):
             use_container_width=True,
         )
 
-tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_retire = st.tabs(
-    ["Dashboard","Income & Expenses","Goals","Assets","🏖️ Retirement"])
+tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_liab, tab_retire = st.tabs(
+    ["Dashboard","Income & Expenses","Goals","Assets","💳 Liabilities","🏖️ Retirement"])
 
 # ══════════════════════════════════════════════════════
 # DASHBOARD
 # ══════════════════════════════════════════════════════
 with tab_dash:
-    dash_top1, dash_top2 = st.columns([3, 1])
-    with dash_top2:
-        st.session_state.liabilities = currency_input(
-            "Outstanding Debt (Deducted from NW)",
-            st.session_state.get("liabilities", 0),
-            key=f"v{_v}_liabilities"
-        )
-
     eval_yr = get_dashboard_eval_year()
     c1,c2,c3,c4 = st.columns(4)
     c1.metric("Total Net Worth",  fmt(total_net_worth()))
@@ -1749,7 +1840,7 @@ with tab_dash:
         tiles_html += '</div>'
         st.markdown(tiles_html, unsafe_allow_html=True)
 
-    if st.session_state.assets:
+    if st.session_state.assets or st.session_state.liabilities:
         cl, cr = st.columns(2)
         with cl:
             st.plotly_chart(nw_bar_chart(), width="stretch")
@@ -1759,7 +1850,7 @@ with tab_dash:
         mc1,mc2,mc3 = st.columns(3)
         mc1.metric("Weighted CAGR",     f"{weighted_cagr():.1f}%")
         mc2.metric("Risk Profile",      risk_profile())
-        mc3.metric("10-Year Projection",fmt(portfolio_at_year(10) - st.session_state.get("liabilities", 0)))
+        mc3.metric("10-Year Projection",fmt(max(portfolio_at_year(10) - liabilities_at_year(10), 0)))
 
     recs = get_recommendations()
     if recs:
@@ -2638,6 +2729,81 @@ with tab_assets:
                 "20 Yrs":        fmt_full(portfolio_at_year(20)),
             })
             st.dataframe(rows, width="stretch", hide_index=True)
+
+# ══════════════════════════════════════════════════════
+# LIABILITIES TAB
+# ══════════════════════════════════════════════════════
+with tab_liab:
+    st.markdown("### 💳 Liabilities & Loans")
+    st.caption("Track your outstanding debt. This automatically reduces your projected Net Worth over time.")
+    st.info("💡 **Cashflow Note:** Since you already log your loan EMIs in the **Expenses** tab, this section purely tracks your principal burndown to calculate an accurate Net Worth projection. It does not alter your monthly surplus.")
+
+    liab_df = pd.DataFrame([{
+        "Loan Name":             l.get("name", ""),
+        "Outstanding Principal": fmt_full(l.get("principal", 0) or 0),
+        "Interest Rate %":       float(l.get("rate", 8.0) or 8.0),
+        "Remaining Months":      int(l.get("months", 12) or 12),
+    } for l in st.session_state.liabilities])
+
+    if liab_df.empty:
+        liab_df = pd.DataFrame(columns=["Loan Name", "Outstanding Principal", "Interest Rate %", "Remaining Months"])
+
+    edited_liab = st.data_editor(
+        liab_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        key=f"liab_editor_v{_v}_{st.session_state.number_format}",
+        column_config={
+            "Loan Name":             st.column_config.TextColumn("Loan Name", width="large"),
+            "Outstanding Principal": st.column_config.TextColumn("Outstanding Principal", help="e.g. 1,800,000"),
+            "Interest Rate %":       st.column_config.NumberColumn("Interest Rate %", format="%.2f", min_value=0.0, max_value=50.0, step=0.5),
+            "Remaining Months":      st.column_config.NumberColumn("Remaining Months", format="%d", min_value=1, max_value=600, step=1),
+        }
+    )
+    st.caption("Edits above are staged in the table — nothing recalculates until you click Apply.")
+    apply_liab = st.button("✅ Apply Liability Changes", key=f"v{_v}_apply_liab", type="primary", use_container_width=True)
+
+    if apply_liab:
+        new_liab_state = []
+        for _, r in edited_liab.iterrows():
+            raw_name = r.get("Loan Name", "")
+            name = "" if pd.isna(raw_name) else str(raw_name).strip()
+            
+            raw_p = r.get("Outstanding Principal", 0)
+            principal = 0 if pd.isna(raw_p) else int(parse_amount(str(raw_p)))
+            
+            if not name and principal == 0: continue
+            
+            rate = float(safe_cell(r, "Interest Rate %", 8.0))
+            months = int(safe_cell(r, "Remaining Months", 12))
+            
+            new_liab_state.append({
+                "name":      name,
+                "principal": principal,
+                "rate":      rate,
+                "months":    months
+            })
+        st.session_state.liabilities = new_liab_state
+        st.toast(f"✓ Applied — {len(new_liab_state)} liability/ies updated")
+        st.rerun()
+
+    if st.session_state.liabilities:
+        st.markdown("---")
+        st.markdown("### 📅 Amortization Schedules")
+        
+        for l in st.session_state.liabilities:
+            principal = l.get('principal', 0)
+            rate = l.get('rate', 0)
+            months = l.get('months', 0)
+            emi = calculate_emi(principal, rate, months)
+            
+            with st.expander(f"Amortization: **{l['name'] or 'Unnamed Loan'}** (Principal: {fmt_full(principal)} | Rate: {rate}%)", expanded=False):
+                st.markdown(f"**Calculated Monthly EMI:** {fmt_full(emi)}")
+                sched, _ = generate_annual_amortization(l)
+                if sched:
+                    st.dataframe(sched, hide_index=True, use_container_width=True)
+                else:
+                    st.caption("No schedule generated (check principal/months).")
 
 # ══════════════════════════════════════════════════════
 # RETIREMENT TAB
