@@ -2757,7 +2757,7 @@ with tab_assets:
             raw_name = r.get("Asset Name", "")
             name = "" if pd.isna(raw_name) else str(raw_name).strip()
             raw_val = r.get("Current Value", 0)
-	    val = 0 if pd.isna(raw_val) else int(parse_amount(str(raw_val)))
+            val = 0 if pd.isna(raw_val) else int(parse_amount(str(raw_val)))
             raw_inv = r.get("Invested", 0)
             inv = 0 if pd.isna(raw_inv) else int(parse_amount(str(raw_inv)))
 
