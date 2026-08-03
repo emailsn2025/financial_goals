@@ -1393,21 +1393,83 @@ def generate_full_pdf_report():
     story.append(Paragraph(f"Generated: {date.today().strftime('%d %b %Y')}", caption_style))
     story.append(Spacer(1, 14))
 
+    # --- CALCULATE METRICS FOR TILES ---
     eval_yr = get_dashboard_eval_year()
-    story.append(Paragraph("Dashboard", heading_style))
-    story.append(Paragraph(
-        f"<b>Total Assets:</b> {fmt(total_assets())} &nbsp;&nbsp; "
-        f"<b>Total Liabilities:</b> {fmt(total_liabilities())} &nbsp;&nbsp; "
-        f"<b>Total Net Worth:</b> {fmt(total_net_worth())}", normal_style))
-    story.append(Paragraph(
-        f"<b>Annual Income (Yr {eval_yr}):</b> {fmt(total_monthly_income() * 12)} &nbsp;&nbsp; "
-        f"<b>Annual Expenses (Yr {eval_yr}):</b> {fmt(total_monthly_expense() * 12)} &nbsp;&nbsp; "
-        f"<b>Annual Surplus (Yr {eval_yr}):</b> {fmt(monthly_surplus() * 12)}", normal_style))
-    story.append(Paragraph(
-        f"<b>Weighted CAGR:</b> {weighted_cagr():.1f}% &nbsp;&nbsp; "
-        f"<b>Risk Profile:</b> {risk_profile()}", normal_style))
-    story.append(Spacer(1, 8))
+    alloc_list = smart_allocation()
+    
+    total_goals = len(alloc_list)
+    fully_funded = sum(1 for g in alloc_list if g["pct"] >= 100)
+    goals_met_str = f"{fully_funded} / {total_goals}" if total_goals > 0 else "0 / 0"
+    
+    ret_goal_name = st.session_state.get("ret_goal_name", "")
+    retire_goal = next((g for g in alloc_list if g["name"] == ret_goal_name), None)
+    if not retire_goal:
+        retire_goal = next((g for g in alloc_list if "retire" in (g["name"] or "").lower() or "pension" in (g["name"] or "").lower()), None)
+    ret_funded_str = f"{retire_goal['pct']}%" if retire_goal else "N/A"
+    
+    annual_inc = total_monthly_income() * 12
+    annual_exp = total_monthly_expense() * 12
+    annual_sur = monthly_surplus() * 12
 
+    ten_yr_proj = fmt(max(portfolio_at_year(10) - liabilities_at_year(10), 0))
+    wcagr_val   = f"{weighted_cagr():.1f}%"
+    risk_prof   = risk_profile()
+    
+    tot_alloc = sum(g["allocated"] for g in alloc_list)
+    tot_cost  = sum(g["display_cost"] for g in alloc_list)
+    funding_ratio = (tot_alloc / tot_cost * 100) if tot_cost > 0 else 0
+    
+    if total_goals == 0:
+        status_text = "No Goals"
+    elif fully_funded == total_goals:
+        status_text = "All Met!"
+    elif funding_ratio >= 75 or fully_funded > 0:
+        status_text = "Nearly Met"
+    else:
+        status_text = "Not Met"
+
+    # --- PDF TILES RENDERER ---
+    story.append(Paragraph("Dashboard", heading_style))
+    story.append(Spacer(1, 6))
+
+    def make_pdf_cell(title, val):
+        return Paragraph(
+            f"<para align='center'><font color='#64748b' size=9>{title}</font><br/><br/>"
+            f"<font color='#1e293b' size=14><b>{val}</b></font></para>", 
+            styles['Normal']
+        )
+
+    grid_data = [
+        [make_pdf_cell("Total Assets", fmt(total_assets())), 
+         make_pdf_cell("Total Liabilities", fmt(total_liabilities())), 
+         make_pdf_cell("Total Net Worth", fmt(total_net_worth())), 
+         make_pdf_cell("10-Year Projection", ten_yr_proj)],
+        
+        [make_pdf_cell(f"Annual Income (Yr {eval_yr})", fmt(annual_inc)), 
+         make_pdf_cell(f"Annual Expenses (Yr {eval_yr})", fmt(annual_exp)), 
+         make_pdf_cell(f"Annual Surplus (Yr {eval_yr})", fmt(annual_sur)), 
+         make_pdf_cell("Weighted CAGR", wcagr_val)],
+         
+        [make_pdf_cell("Goals Fully Funded", goals_met_str), 
+         make_pdf_cell("Retirement Corpus Funded", ret_funded_str), 
+         make_pdf_cell("Risk Profile", risk_prof), 
+         make_pdf_cell("Goal Status", status_text)]
+    ]
+
+    tile_table = Table(grid_data, colWidths=[6.5*cm]*4, rowHeights=[2.0*cm]*3)
+    tile_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f8fafc')),
+        ('BOX', (0,0), (-1,-1), 1, colors.HexColor('#cbd5e1')),
+        ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#cbd5e1')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('LEFTPADDING', (0,0), (-1,-1), 5),
+        ('RIGHTPADDING', (0,0), (-1,-1), 5),
+    ]))
+    
+    story.append(tile_table)
+    story.append(Spacer(1, 14))
+
+    # --- REST OF THE REPORT ---
     if get_effective_assets():
         chart_row = []
         nw_img = _fig_to_pdf_image(nw_bar_chart(), width_cm=12, height_cm=7.5, name="Net Worth Projection", errors=chart_errors)
