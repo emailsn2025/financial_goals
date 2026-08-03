@@ -204,10 +204,16 @@ def asset_swp_start_display(a):
     if raw > 0: return rel_to_cal(raw)
     return THIS_YEAR
 
+def get_asset_eff_cagr(a):
+    c = float(a.get("cagr", 0) or 0)
+    if st.session_state.get("apply_tax_drag", False):
+        c = c * (1.0 - asset_tax_rate(a.get("asset_class", "Equity")))
+    return c
+
 def asset_value_at_year(a, target_year, avg_inf=6.0):
     return _asset_value_at_year_cached(
         value         = float(a.get("value", 0) or 0),
-        cagr          = float(a.get("cagr", 0) or 0),
+        cagr          = get_asset_eff_cagr(a),
         swp_monthly   = float(a.get("swp_monthly", 0) or 0),
         swp_start_year= asset_swp_start_rel(a),
         target_year   = int(target_year),
@@ -228,7 +234,7 @@ for key, default in [
     ("ret_annual_return", 8.0), ("ret_tax_class", "Equity"),
     ("ret_custom_tax", 0.0), ("ret_q_withdrawal", 0), ("ret_w_inflation", 6.0),
     ("proj_start_year", THIS_YEAR), ("proj_end_year", THIS_YEAR + 30),
-    ("number_format", "Western"),
+    ("number_format", "Western"), ("apply_tax_drag", False),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -347,7 +353,7 @@ def liabilities_at_year(y):
 def weighted_cagr():
     ta = total_assets()
     if ta == 0: return 0.0
-    return sum((a["value"]/ta)*a["cagr"] for a in st.session_state.assets)
+    return sum((a["value"]/ta) * get_asset_eff_cagr(a) for a in st.session_state.assets)
 
 def portfolio_at_year(y):
     ai = avg_inflation()
@@ -748,9 +754,9 @@ def get_recommendations():
             f'"{g["name"]}" is {g["pct"]}% funded. Save ~{fmt(sip)}/month to close the {fmt(gap)} gap.'))
 
     for a in st.session_state.assets:
-        if a["cagr"] < ai and st.session_state.expenses:
+        if get_asset_eff_cagr(a) < ai and st.session_state.expenses:
             recs.append(("⚠️","Inflation Warning",
-                f'"{a["name"]}" returns {a["cagr"]}% — below avg inflation {ai:.1f}%.'))
+                f'"{a["name"]}" returns {get_asset_eff_cagr(a):.1f}% — below avg inflation {ai:.1f}%.'))
 
     if any(goal_start_year(g)<=3 for g in st.session_state.goals) and \
        any(a["asset_class"]=="Equity" for a in st.session_state.assets):
@@ -1468,7 +1474,7 @@ def generate_full_pdf_report():
             swp  = f'{fmt_full(a.get("swp_monthly",0) or 0)}/mo from {asset_swp_start_display(a)}' \
                    if (a.get("swp_monthly") or 0) > 0 else "—"
             rows.append([
-                a["name"] or "—", a.get("asset_type","") or "—", a["asset_class"], fmt_full(a["value"]), f'{a["cagr"]:.2f}%',
+                a["name"] or "—", a.get("asset_type","") or "—", a["asset_class"], fmt_full(a["value"]), f'{get_asset_eff_cagr(a):.2f}%',
                 tags, swp,
                 fmt_full(asset_value_at_year(a,5,ai)), fmt_full(asset_value_at_year(a,10,ai)), fmt_full(asset_value_at_year(a,20,ai)),
             ])
@@ -1732,6 +1738,7 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
                 "ret_custom_tax":     st.session_state.get("ret_custom_tax", 0.0),
                 "ret_q_withdrawal":   st.session_state.get("ret_q_withdrawal", 0),
                 "ret_w_inflation":    st.session_state.get("ret_w_inflation", 6.0),
+                "apply_tax_drag":     st.session_state.get("apply_tax_drag", False),
             }, indent=2),
             file_name="financial_planner_data.json", mime="application/json", use_container_width=True)
     with lc:
@@ -1746,7 +1753,7 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
                 d = st.session_state.pop("_pending_load")
                 for k in ["income","expenses","goals","assets","liabilities","projection_years",
                           "ret_opening_corpus","ret_goal_name","ret_annual_return",
-                          "ret_tax_class","ret_custom_tax","ret_q_withdrawal","ret_w_inflation"]:
+                          "ret_tax_class","ret_custom_tax","ret_q_withdrawal","ret_w_inflation", "apply_tax_drag"]:
                     if k in d:
                         if k == "liabilities" and isinstance(d[k], (int, float)):
                             st.session_state[k] = []
@@ -1768,6 +1775,7 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
             st.session_state.ret_custom_tax     = 0.0
             st.session_state.ret_q_withdrawal   = 0
             st.session_state.ret_w_inflation    = 6.0
+            st.session_state.apply_tax_drag     = False
             st.session_state.data_version += 1; st.rerun()
 
 with st.expander("📄 Export All Tabs to PDF", expanded=False):
@@ -2139,6 +2147,7 @@ with tab_inc_exp:
 
     st.markdown("### 💰 Monthly Income Sources")
     st.caption(f"Total: {fmt_full(total_monthly_income())}/month")
+    st.markdown('<div style="color: #ef4444; font-weight: 600; font-size: 13px; margin-bottom: 12px;">⚠️ Note: Please enter your income net of tax (your actual take-home pay).</div>', unsafe_allow_html=True)
 
     with st.expander("📥 Import Income from Excel", expanded=False):
         st.caption("Columns: Source | Monthly | Growth %/yr | Start Year | End Year")
@@ -2517,7 +2526,7 @@ with tab_assets:
                     subset = [a for a in st.session_state.assets if a["asset_class"] == target_cls] if target_cls else st.session_state.assets
                     sub_val = sum(a["value"] for a in subset)
                     if sub_val == 0: return 0.0
-                    return sum((a["value"] / sub_val) * a["cagr"] for a in subset)
+                    return sum((a["value"] / sub_val) * get_asset_eff_cagr(a) for a in subset)
                 
                 cagr_all     = calc_cls_cagr(None)
                 cagr_equity  = calc_cls_cagr("Equity")
@@ -2560,6 +2569,16 @@ with tab_assets:
 
     st.markdown("### 📈 Asset Portfolio")
     st.caption(f"Total Assets: {fmt_full(total_assets())} · Weighted CAGR: {weighted_cagr():.1f}%")
+
+    td_col1, td_col2 = st.columns([1, 3])
+    with td_col1:
+        apply_td = st.toggle("Apply Automatic Tax Drag", value=st.session_state.apply_tax_drag, key=f"v{_v}_tax_drag")
+        if apply_td != st.session_state.apply_tax_drag:
+            st.session_state.apply_tax_drag = apply_td
+            _asset_value_at_year_cached.clear()
+            st.rerun()
+    with td_col2:
+        st.caption("Reduces your expected CAGR for projections based on the asset class's standard LTCG tax rate (Equity/Metals: 12.5%, Debt/Property/Other: 30%).")
 
     with st.expander("📥 Import Assets from Excel", expanded=False):
         st.caption(
@@ -2629,7 +2648,7 @@ with tab_assets:
             "Current Value":   st.column_config.TextColumn("Current Value", help="e.g. 1,800,000"),
             "Maturity Amount": st.column_config.TextColumn("Maturity Amount", help="e.g. 1,800,000"),
             "Maturity Date":   st.column_config.TextColumn("Maturity Date", help="DD/MM/YYYY"),
-            "CAGR %":          st.column_config.NumberColumn("CAGR %", format="%.2f", min_value=0.0, max_value=50.0, step=0.5, help="Auto-calculated if maturity info provided"),
+            "CAGR %":          st.column_config.NumberColumn("Gross CAGR %" if st.session_state.get("apply_tax_drag") else "CAGR %", format="%.2f", min_value=0.0, max_value=50.0, step=0.5, help="Auto-calculated if maturity info provided"),
             "Tag Goals":       st.column_config.TextColumn("Tag Goals", help="Comma-separated goal names"),
             "SWP Monthly":     st.column_config.TextColumn("SWP Monthly", help="e.g. 1,800,000"),
             "SWP Start Yr":    st.column_config.NumberColumn("SWP Start Yr", format="%d", min_value=2000, max_value=2100, help="Calendar year, e.g. 2030"),
@@ -2746,7 +2765,7 @@ with tab_assets:
                     "Current Value": fmt_full(a["value"]),
                     "Maturity Amt":  fmt_full(mat) if mat else "—",
                     "Maturity Date": a.get("maturity_date","") or "—",
-                    "CAGR":          f'{a["cagr"]:.2f}%',
+                    "CAGR":          f'{get_asset_eff_cagr(a):.2f}%' + (" (Net)" if st.session_state.get("apply_tax_drag") else ""),
                     "Tax on Gains":  fmt_full(tax_m) if tax_m else "—",
                     "Net Maturity":  fmt_full(net_m) if net_m else "—",
                     "Tagged Goals":  tags,
@@ -2927,7 +2946,7 @@ with tab_retire:
 
         if tagged_assets:
             total_val      = sum(a["value"] for a in tagged_assets)
-            suggested_cagr = sum((a["value"]/total_val)*a["cagr"] for a in tagged_assets) if total_val > 0 else 8.0
+            suggested_cagr = sum((a["value"]/total_val)*get_asset_eff_cagr(a) for a in tagged_assets) if total_val > 0 else 8.0
         else:
             suggested_cagr = 8.0
 
