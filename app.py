@@ -50,10 +50,12 @@ st.markdown("""
     div[data-testid="stMetric"] { border: 1px solid rgba(128,128,128,0.2); border-radius: 10px; padding: 12px 16px; }
     div[data-testid="stMetric"] label { font-size: 13px !important; }
     
-    /* Enlarge Tab Headers */
-    button[data-baseweb="tab"] p, 
-    button[data-baseweb="tab"] span, 
-    button[data-baseweb="tab"] div[data-testid="stMarkdownContainer"] p {
+    /* Aggressively Enlarge Tab Headers */
+    .stTabs button p, .stTabs button span {
+        font-size: 22px !important;
+        font-weight: 700 !important;
+    }
+    div[data-testid="stTabs"] button {
         font-size: 22px !important;
         font-weight: 700 !important;
     }
@@ -171,13 +173,13 @@ def calc_asset_cagr(invested, maturity_amt, purchase_date_str, maturity_date_str
         return ((maturity_amt / invested) ** (1 / yrs) - 1) * 100
     except: return 0.0
 
-def calc_asset_maturity(invested, cagr, purchase_date_str, maturity_date_str):
+def calc_asset_maturity(principal, cagr, purchase_date_str, maturity_date_str):
     try:
         pd_  = parse_date(purchase_date_str)
         md_  = parse_date(maturity_date_str)
         yrs  = years_between(pd_, md_)
-        if yrs <= 0 or invested <= 0 or cagr <= 0: return 0.0
-        return invested * ((1 + cagr / 100.0) ** yrs)
+        if yrs <= 0 or principal <= 0 or cagr <= 0: return 0.0
+        return principal * ((1 + cagr / 100.0) ** yrs)
     except: return 0.0
 
 def asset_tax_rate(asset_class):
@@ -186,8 +188,8 @@ def asset_tax_rate(asset_class):
     rate = st.session_state.get(f"tax_rate_{asset_class}", DEFAULT_TAX_RATES.get(asset_class, 30.0))
     return float(rate) / 100.0
 
-def asset_net_maturity(invested, maturity_amt, asset_class):
-    gain = max(maturity_amt - invested, 0)
+def asset_net_maturity(cost_basis, maturity_amt, asset_class):
+    gain = max(maturity_amt - cost_basis, 0)
     tax  = gain * asset_tax_rate(asset_class)
     return maturity_amt - tax, tax
 
@@ -1522,10 +1524,13 @@ def generate_full_pdf_report():
                    if (a.get("swp_monthly") or 0) > 0 else "—"
             
             inv = a.get("invested",0) or 0
+            val = a.get("value",0) or 0
             mat = a.get("maturity_amt",0) or 0
-            net_m, tax_m = asset_net_maturity(inv, mat, a["asset_class"]) if (mat>0 and inv>0) else (0,0)
-            tax_disp = fmt_full(tax_m) if (tax_m and st.session_state.get("apply_tax_drag")) else "—"
-            net_disp = fmt_full(net_m) if (net_m and st.session_state.get("apply_tax_drag")) else (fmt_full(mat) if mat else "—")
+            cost_basis = inv if inv > 0 else val
+            net_m, tax_m = asset_net_maturity(cost_basis, mat, a["asset_class"]) if mat > 0 else (0,0)
+            
+            tax_disp = fmt_full(tax_m) if (tax_m > 0 and st.session_state.get("apply_tax_drag")) else "—"
+            net_disp = fmt_full(net_m) if (net_m > 0 and st.session_state.get("apply_tax_drag")) else (fmt_full(mat) if mat else "—")
             
             rows.append([
                 a["name"] or "—", a.get("asset_type","") or "—", a["asset_class"], fmt_full(a["value"]), f'{get_asset_eff_cagr(a):.2f}%',
@@ -2834,9 +2839,14 @@ with tab_assets:
                 tags   = ", ".join(a.get("tagged_goals") or []) or "—"
                 swp    = f'{fmt_full(a.get("swp_monthly",0) or 0)}/mo from {asset_swp_start_display(a)}' \
                          if (a.get("swp_monthly") or 0) > 0 else "—"
-                inv    = a.get("invested",0) or 0
-                mat    = a.get("maturity_amt",0) or 0
-                net_m, tax_m = asset_net_maturity(inv, mat, a["asset_class"]) if (mat>0 and inv>0) else (0,0)
+                
+                inv = a.get("invested",0) or 0
+                val = a.get("value",0) or 0
+                mat = a.get("maturity_amt",0) or 0
+                
+                cost_basis = inv if inv > 0 else val
+                net_m, tax_m = asset_net_maturity(cost_basis, mat, a["asset_class"]) if mat > 0 else (0,0)
+                
                 tot_inv += inv
                 tot_mat += mat
                 tot_tax += tax_m
@@ -2848,7 +2858,7 @@ with tab_assets:
                     "Class":         a["asset_class"],
                     "Purchase Date": a.get("purchase_date","") or "—",
                     "Invested":      fmt_full(inv) if inv else "—",
-                    "Current Value": fmt_full(a["value"]),
+                    "Current Value": fmt_full(val),
                     "Maturity Amt":  fmt_full(mat) if mat else "—",
                     "Maturity Date": a.get("maturity_date","") or "—",
                     "CAGR":          f'{get_asset_eff_cagr(a):.2f}%' + (" (Net)" if st.session_state.get("apply_tax_drag") else ""),
