@@ -50,7 +50,6 @@ st.markdown("""
     div[data-testid="stMetric"] { border: 1px solid rgba(128,128,128,0.2); border-radius: 10px; padding: 12px 16px; }
     div[data-testid="stMetric"] label { font-size: 13px !important; }
     
-    /* Aggressively Enlarge Tab Headers (Increased Font Size to 28px) */
     .stTabs button p, .stTabs button span {
         font-size: 28px !important;
         font-weight: 700 !important;
@@ -203,6 +202,62 @@ def get_asset_eff_cagr(a):
     return c
 
 # ══════════════════════════════════════════════════════
+# VIRTUAL AUTO-SWEEP SURPLUS
+# ══════════════════════════════════════════════════════
+
+@st.cache_data(max_entries=1024)
+def swept_surplus_at_year_cached(target_rel_year, eff_cagr, inc_tuple, exp_tuple, proj_start):
+    if target_rel_year <= 0: return 0.0
+    total_val = 0.0
+    for rel_y in range(target_rel_year):
+        cal_y = proj_start + rel_y
+        
+        inc = 0.0
+        for e in inc_tuple:
+            if e["start_year"] <= cal_y <= e["end_year"]:
+                inc += e["monthly"] * 12 * ((1 + e["growth"]/100.0) ** rel_y)
+                
+        exp = 0.0
+        for e in exp_tuple:
+            if e["start_year"] <= cal_y <= e["end_year"]:
+                exp += e["monthly"] * 12 * ((1 + e["inflation"]/100.0) ** rel_y)
+        
+        surplus = max(inc - exp, 0)
+        remaining_years = target_rel_year - rel_y - 1
+        if remaining_years > 0:
+            total_val += surplus * ((1 + eff_cagr / 100.0) ** remaining_years)
+        else:
+            total_val += surplus
+            
+    return total_val
+    
+def swept_surplus_at_year(target_rel_year, eff_cagr):
+    inc_tup = tuple({"monthly": e["monthly"], "growth": e.get("growth", 5.0), "start_year": int(e.get("start_year", THIS_YEAR)), "end_year": int(e.get("end_year", 2100))} for e in st.session_state.income)
+    exp_tup = tuple({"monthly": e["monthly"], "inflation": e.get("inflation", 6.0), "start_year": int(e.get("start_year", THIS_YEAR)), "end_year": int(e.get("end_year", 2100))} for e in st.session_state.expenses)
+    proj_start = int(st.session_state.get("proj_start_year", THIS_YEAR))
+    return swept_surplus_at_year_cached(target_rel_year, eff_cagr, inc_tup, exp_tup, proj_start)
+
+def get_effective_assets():
+    assets = list(st.session_state.assets)
+    if st.session_state.get("auto_sweep_surplus", False):
+        assets.append({
+            "name": "Unallocated Cash",
+            "asset_type": "Auto-Sweep Surplus",
+            "asset_class": "Debt",
+            "purchase_date": str(TODAY),
+            "invested": 0,
+            "value": 0,
+            "maturity_amt": 0,
+            "maturity_date": "",
+            "cagr": st.session_state.get("sweep_cagr", 8.0),
+            "tagged_goals": [],
+            "swp_monthly": 0,
+            "swp_start_year": 0,
+            "is_virtual_surplus": True
+        })
+    return assets
+
+# ══════════════════════════════════════════════════════
 # CACHED PURE COMPUTATION (no session state)
 # ══════════════════════════════════════════════════════
 
@@ -230,6 +285,7 @@ def clear_asset_cache():
     _asset_value_at_year_cached.clear()
     _goal_occurrences_cached.clear()
     _compound_cached.clear()
+    swept_surplus_at_year_cached.clear()
 
 # ══════════════════════════════════════════════════════
 # ASSET VALUE WITH SWP
@@ -250,6 +306,8 @@ def asset_swp_start_display(a):
     return THIS_YEAR
 
 def asset_value_at_year(a, target_year, avg_inf=6.0):
+    if a.get("is_virtual_surplus"):
+        return swept_surplus_at_year(target_year, get_asset_eff_cagr(a))
     return _asset_value_at_year_cached(
         value         = float(a.get("value", 0) or 0),
         cagr          = get_asset_eff_cagr(a),
@@ -274,6 +332,7 @@ for key, default in [
     ("ret_custom_tax", 0.0), ("ret_q_withdrawal", 0), ("ret_w_inflation", 6.0),
     ("proj_start_year", THIS_YEAR), ("proj_end_year", THIS_YEAR + 30),
     ("number_format", "Western"), ("apply_tax_drag", False),
+    ("auto_sweep_surplus", False), ("sweep_cagr", 8.0),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -386,7 +445,7 @@ def avg_inflation():
     if tm == 0: return 6.0
     return sum((e["monthly"]/tm)*e["inflation"] for e in active)
 
-def total_assets():       return sum(a["value"] for a in st.session_state.assets)
+def total_assets():       return sum(a["value"] for a in get_effective_assets())
 def total_liabilities():  return sum(float(l.get("principal", 0)) for l in st.session_state.liabilities)
 def total_net_worth():    return total_assets() - total_liabilities()
 def monthly_surplus():    return total_monthly_income() - total_monthly_expense()
@@ -397,17 +456,18 @@ def liabilities_at_year(y):
 def weighted_cagr():
     ta = total_assets()
     if ta == 0: return 0.0
-    return sum((a["value"]/ta) * get_asset_eff_cagr(a) for a in st.session_state.assets)
+    return sum((a["value"]/ta) * get_asset_eff_cagr(a) for a in get_effective_assets())
 
 def portfolio_at_year(y):
     ai = avg_inflation()
-    return sum(asset_value_at_year(a, y, ai) for a in st.session_state.assets)
+    return sum(asset_value_at_year(a, y, ai) for a in get_effective_assets())
 
 def risk_profile():
     ta = total_assets()
     if ta == 0: return "N/A"
-    eq   = sum(a["value"] for a in st.session_state.assets if a["asset_class"]=="Equity")/ta*100
-    debt = sum(a["value"] for a in st.session_state.assets if a["asset_class"] in ["Debt","Other"])/ta*100
+    eff_assets = get_effective_assets()
+    eq   = sum(a["value"] for a in eff_assets if a["asset_class"]=="Equity")/ta*100
+    debt = sum(a["value"] for a in eff_assets if a["asset_class"] in ["Debt","Other"])/ta*100
     if eq   > 70: return "Aggressive"
     if debt > 60: return "Conservative"
     return "Balanced"
@@ -492,7 +552,8 @@ def smart_allocation():
     projs     = goal_projections()
     results   = []
 
-    untagged_assets = [a for a in st.session_state.assets if not (a.get("tagged_goals") or [])]
+    eff_assets = get_effective_assets()
+    untagged_assets = [a for a in eff_assets if not (a.get("tagged_goals") or [])]
 
     remaining_pool = None
     prev_start = 0
@@ -503,7 +564,7 @@ def smart_allocation():
         cost    = goal_value_at_start(g, wcagr_pct) if use_cum else g["inflated_cost"]
         yr      = g["start_year"]
 
-        tagged = [a for a in st.session_state.assets if gname and gname in (a.get("tagged_goals") or [])]
+        tagged = [a for a in eff_assets if gname and gname in (a.get("tagged_goals") or [])]
         tagged_val = sum(asset_value_at_year(a, yr, ai) for a in tagged)
 
         if remaining_pool is None:
@@ -545,7 +606,8 @@ def calculate_surplus_today():
     wcagr     = wcagr_pct / 100
     projs     = goal_projections()
     
-    untagged_assets = [a for a in st.session_state.assets if not (a.get("tagged_goals") or [])]
+    eff_assets = get_effective_assets()
+    untagged_assets = [a for a in eff_assets if not (a.get("tagged_goals") or [])]
     
     remaining_pool = None
     prev_start = 0
@@ -557,7 +619,7 @@ def calculate_surplus_today():
         cost    = goal_value_at_start(g, wcagr_pct) if use_cum else g["inflated_cost"]
         yr      = g["start_year"]
         
-        tagged = [a for a in st.session_state.assets if gname and gname in (a.get("tagged_goals") or [])]
+        tagged = [a for a in eff_assets if gname and gname in (a.get("tagged_goals") or [])]
         tagged_val = sum(asset_value_at_year(a, yr, ai) for a in tagged)
             
         if remaining_pool is None:
@@ -591,7 +653,8 @@ def compute_granular_asset_allocation():
     wcagr     = wcagr_pct / 100
     projs     = goal_projections()
     
-    asset_consumed = {i: 0.0 for i in range(len(st.session_state.assets))}
+    eff_assets = get_effective_assets()
+    asset_consumed = {i: 0.0 for i in range(len(eff_assets))}
     table_rows = []
     tot_allocated_all = 0.0
     
@@ -604,7 +667,7 @@ def compute_granular_asset_allocation():
         remaining_need = cost
         
         # 1. Tagged Assets
-        for i, a in enumerate(st.session_state.assets):
+        for i, a in enumerate(eff_assets):
             if remaining_need <= 0: break
             if gname and gname in (a.get("tagged_goals") or []):
                 avail_frac = 1.0 - asset_consumed[i]
@@ -630,7 +693,7 @@ def compute_granular_asset_allocation():
                         })
                         
         # 2. Untagged Assets
-        for i, a in enumerate(st.session_state.assets):
+        for i, a in enumerate(eff_assets):
             if remaining_need <= 0: break
             if not (a.get("tagged_goals") or []):
                 avail_frac = 1.0 - asset_consumed[i]
@@ -666,7 +729,7 @@ def compute_granular_asset_allocation():
             })
             
     # 3. Surplus / Unallocated Assets
-    for i, a in enumerate(st.session_state.assets):
+    for i, a in enumerate(eff_assets):
         avail_frac = 1.0 - asset_consumed[i]
         if avail_frac > 0.0001 and a["value"] > 0:
             draw_today = a["value"] * avail_frac
@@ -788,6 +851,7 @@ def get_recommendations():
     alloc = smart_allocation()
     ai    = avg_inflation()
     ta    = total_assets()
+    eff_assets = get_effective_assets()
 
     shortfalls = [a for a in alloc if a["pct"] < 100]
     if shortfalls:
@@ -797,26 +861,26 @@ def get_recommendations():
         recs.append(("📊","Cover Shortfall",
             f'"{g["name"]}" is {g["pct"]}% funded. Save ~{fmt(sip)}/month to close the {fmt(gap)} gap.'))
 
-    for a in st.session_state.assets:
+    for a in eff_assets:
         if get_asset_eff_cagr(a) < ai and st.session_state.expenses:
             recs.append(("⚠️","Inflation Warning",
                 f'"{a["name"]}" returns {get_asset_eff_cagr(a):.1f}% — below avg inflation {ai:.1f}%.'))
 
     if any(goal_start_year(g)<=3 for g in st.session_state.goals) and \
-       any(a["asset_class"]=="Equity" for a in st.session_state.assets):
+       any(a["asset_class"]=="Equity" for a in eff_assets):
         recs.append(("🔄","Horizon Matching",
             "Goals within 3 years detected. Consider shifting equity into debt for capital protection."))
 
     if ta > 0:
         ct = {}
-        for a in st.session_state.assets: ct[a["asset_class"]] = ct.get(a["asset_class"],0)+a["value"]
+        for a in eff_assets: ct[a["asset_class"]] = ct.get(a["asset_class"],0)+a["value"]
         for cls, val in ct.items():
             if (val/ta)*100 > 60:
                 recs.append(("⚖️","Diversification Alert", f"{cls} is {round((val/ta)*100)}% of portfolio."))
 
     tm = total_monthly_expense()
     if tm > 0:
-        liq = sum(a["value"] for a in st.session_state.assets if a["asset_class"] in ["Debt","Other"])
+        liq = sum(a["value"] for a in eff_assets if a["asset_class"] in ["Debt","Other"])
         e6m = tm*6*(1+ai/100)
         if liq < e6m:
             recs.append(("🛡️","Emergency Fund",
@@ -1116,7 +1180,7 @@ def asset_chart():
     max_y = max(st.session_state.projection_years, max((goal_end_year(g) for g in st.session_state.goals), default=30))
     years = list(range(max_y+1))
     fig   = go.Figure(); totals=[0.0]*len(years)
-    for i, a in enumerate(st.session_state.assets):
+    for i, a in enumerate(get_effective_assets()):
         vals = [asset_value_at_year(a, y, ai) for y in years]
         for j,v in enumerate(vals): totals[j]+=v
         swp_amt = a.get("swp_monthly",0) or 0
@@ -1126,7 +1190,7 @@ def asset_chart():
         fig.add_trace(go.Scatter(x=years, y=vals, name=label,
             line=dict(color=LINE_COLORS[i%len(LINE_COLORS)], width=2),
             hovertemplate="%{y:,.0f}<extra>%{fullData.name}</extra>"))
-    if st.session_state.assets:
+    if get_effective_assets():
         fig.add_trace(go.Scatter(x=years, y=totals, name="Total Portfolio",
             line=dict(color="#1e293b", width=3, dash="dash"),
             hovertemplate="%{y:,.0f}<extra>Total Portfolio</extra>"))
@@ -1137,9 +1201,9 @@ def asset_chart():
 
 def allocation_pie_chart():
     ct = {}
-    for a in st.session_state.assets: ct[a["asset_class"]] = ct.get(a["asset_class"],0)+a["value"]
+    for a in get_effective_assets(): ct[a["asset_class"]] = ct.get(a["asset_class"],0)+a["value"]
     labels,values = list(ct.keys()), list(ct.values())
-    if not values: return None
+    if not values or sum(values) == 0: return None
     fig = go.Figure(go.Pie(labels=labels, values=values, hole=0.45,
         marker=dict(colors=LINE_COLORS[:len(labels)]),
         textinfo="label+percent", textposition="outside",
@@ -1150,11 +1214,11 @@ def allocation_pie_chart():
 
 def asset_type_pie_chart():
     ct = {}
-    for a in st.session_state.assets:
+    for a in get_effective_assets():
         t = (a.get("asset_type") or "").strip() or "Unspecified"
         ct[t] = ct.get(t, 0) + a["value"]
     labels, values = list(ct.keys()), list(ct.values())
-    if not values: return None
+    if not values or sum(values) == 0: return None
     fig = go.Figure(go.Pie(labels=labels, values=values, hole=0.45,
         marker=dict(colors=LINE_COLORS[:len(labels)]),
         textinfo="label+percent", textposition="outside",
@@ -1342,7 +1406,7 @@ def generate_full_pdf_report():
         f"<b>Risk Profile:</b> {risk_profile()}", normal_style))
     story.append(Spacer(1, 8))
 
-    if st.session_state.assets:
+    if get_effective_assets():
         chart_row = []
         nw_img = _fig_to_pdf_image(nw_bar_chart(), width_cm=12, height_cm=7.5, name="Net Worth Projection", errors=chart_errors)
         pie_img = _fig_to_pdf_image(allocation_pie_chart(), width_cm=12, height_cm=7.5, name="Asset Allocation (Dashboard)", errors=chart_errors)
@@ -1472,7 +1536,6 @@ def generate_full_pdf_report():
         ])
         story.append(_pdf_table(headers, rows))
 
-        # Include Granular Allocation and Class Mix into PDF
         story.append(Spacer(1, 10))
         story.append(Paragraph("Class Mix Funding Each Goal", sub_style))
         granular_rows = compute_granular_asset_allocation()
@@ -1502,15 +1565,16 @@ def generate_full_pdf_report():
         f"<b>Total Assets:</b> {fmt_full(total_assets())} &nbsp;&nbsp; "
         f"<b>Weighted CAGR:</b> {weighted_cagr():.1f}%", normal_style))
     story.append(Spacer(1, 6))
-    if st.session_state.assets:
-        if len(st.session_state.assets) <= 20:
+    eff_assets = get_effective_assets()
+    if eff_assets:
+        if len(eff_assets) <= 20:
             asset_img = _fig_to_pdf_image(asset_chart(), width_cm=25, height_cm=9, name="Asset Growth Chart", errors=chart_errors)
             if asset_img:
                 story.append(asset_img)
                 story.append(Spacer(1, 8))
         else:
             story.append(Paragraph(
-                f"(Per-asset growth chart omitted — {len(st.session_state.assets)} assets is too "
+                f"(Per-asset growth chart omitted — {len(eff_assets)} assets is too "
                 f"many to render legibly. See the summary table below.)", caption_style))
             story.append(Spacer(1, 6))
 
@@ -1524,7 +1588,7 @@ def generate_full_pdf_report():
         ai = avg_inflation()
         headers = ["Asset","Type","Class","Current Value","CAGR","Tagged Goals","SWP","5 Yrs","10 Yrs","20 Yrs"]
         rows = []
-        for a in st.session_state.assets:
+        for a in eff_assets:
             tags = ", ".join(a.get("tagged_goals") or []) or "—"
             swp  = f'{fmt_full(a.get("swp_monthly",0) or 0)}/mo from {asset_swp_start_display(a)}' \
                    if (a.get("swp_monthly") or 0) > 0 else "—"
@@ -1800,6 +1864,8 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
             "ret_q_withdrawal":   st.session_state.get("ret_q_withdrawal", 0),
             "ret_w_inflation":    st.session_state.get("ret_w_inflation", 6.0),
             "apply_tax_drag":     st.session_state.get("apply_tax_drag", False),
+            "auto_sweep_surplus": st.session_state.get("auto_sweep_surplus", False),
+            "sweep_cagr":         st.session_state.get("sweep_cagr", 8.0),
             "tax_rates":          {cls: st.session_state.get(f"tax_rate_{cls}", DEFAULT_TAX_RATES[cls]) for cls in ASSET_CLASSES}
         }
         st.download_button("⬇️ Download My Data", data=json.dumps(export_data, indent=2), file_name="financial_planner_data.json", mime="application/json", use_container_width=True)
@@ -1815,7 +1881,8 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
                 d = st.session_state.pop("_pending_load")
                 for k in ["income","expenses","goals","assets","liabilities","projection_years",
                           "ret_opening_corpus","ret_goal_name","ret_annual_return",
-                          "ret_tax_class","ret_custom_tax","ret_q_withdrawal","ret_w_inflation", "apply_tax_drag"]:
+                          "ret_tax_class","ret_custom_tax","ret_q_withdrawal","ret_w_inflation", 
+                          "apply_tax_drag", "auto_sweep_surplus", "sweep_cagr"]:
                     if k in d:
                         if k == "liabilities" and isinstance(d[k], (int, float)):
                             st.session_state[k] = []
@@ -1839,6 +1906,8 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
             st.session_state.ret_q_withdrawal   = 0
             st.session_state.ret_w_inflation    = 6.0
             st.session_state.apply_tax_drag     = False
+            st.session_state.auto_sweep_surplus = False
+            st.session_state.sweep_cagr         = 8.0
             for cls in ASSET_CLASSES:
                 st.session_state[f"tax_rate_{cls}"] = DEFAULT_TAX_RATES[cls]
             clear_asset_cache()
@@ -2021,7 +2090,8 @@ with tab_dash:
 
     st.markdown("---")
     
-    if st.session_state.assets or st.session_state.liabilities:
+    eff_assets = get_effective_assets()
+    if eff_assets or st.session_state.liabilities:
         cl, cr = st.columns(2)
         with cl:
             st.plotly_chart(nw_bar_chart(), width="stretch")
@@ -2051,7 +2121,7 @@ with tab_dash:
         
         ai               = avg_inflation()
         ta               = total_assets()
-        eq_pct           = sum(a["value"] for a in st.session_state.assets if a["asset_class"]=="Equity") / ta * 100 if ta > 0 else 0
+        eq_pct           = sum(a["value"] for a in eff_assets if a["asset_class"]=="Equity") / ta * 100 if ta > 0 else 0
         wcagr_pct        = weighted_cagr()
         wcagr            = wcagr_pct / 100
 
@@ -2132,7 +2202,7 @@ with tab_dash:
 
         st.table(pd.DataFrame(summary_rows))
 
-        zero_cagr_val = sum(a.get("value",0) for a in st.session_state.assets if (a.get("cagr") or 0) == 0)
+        zero_cagr_val = sum(a.get("value",0) for a in eff_assets if (a.get("cagr") or 0) == 0 and not a.get("is_virtual_surplus"))
         recurring_goals = [g for g in goal_projections() if goal_frequency(g) > 0]
         suspect_goals = [g for g in goal_projections() if goal_frequency(g) == 0 and goal_end_year(g) > goal_start_year(g)]
         
@@ -2158,7 +2228,7 @@ with tab_dash:
                         f"has 0% CAGR.** These assets earn nothing in projections, dragging down your "
                         f"weighted CAGR to {weighted_cagr():.1f}%. Go to Assets tab and enter expected "
                         f"returns for: " +
-                        ", ".join(a.get("name","?") for a in st.session_state.assets
+                        ", ".join(a.get("name","?") for a in eff_assets
                                   if (a.get("cagr") or 0) == 0)[:200]
                     )
                 if recurring_goals:
@@ -2237,12 +2307,12 @@ with tab_inc_exp:
                 with c1:
                     if st.button("Replace all income", key=f"v{_v}_inc_replace"):
                         st.session_state.income = new_inc
-                        _asset_value_at_year_cached.clear(); _compound_cached.clear()
+                        clear_asset_cache()
                         st.rerun()
                 with c2:
                     if st.button("Append to existing", key=f"v{_v}_inc_append"):
                         st.session_state.income.extend(new_inc)
-                        _asset_value_at_year_cached.clear(); _compound_cached.clear()
+                        clear_asset_cache()
                         st.rerun()
 
     inc_df = pd.DataFrame([{
@@ -2289,6 +2359,7 @@ with tab_inc_exp:
             })
         st.session_state.income = new_inc_state
         st.toast(f"✓ Applied — {len(new_inc_state)} income source(s) updated")
+        clear_asset_cache()
         st.rerun()
 
     st.divider()
@@ -2308,12 +2379,12 @@ with tab_inc_exp:
                 with c1:
                     if st.button("Replace all expenses", key=f"v{_v}_exp_replace"):
                         st.session_state.expenses = new_exp
-                        _asset_value_at_year_cached.clear(); _compound_cached.clear()
+                        clear_asset_cache()
                         st.rerun()
                 with c2:
                     if st.button("Append to existing", key=f"v{_v}_exp_append"):
                         st.session_state.expenses.extend(new_exp)
-                        _asset_value_at_year_cached.clear(); _compound_cached.clear()
+                        clear_asset_cache()
                         st.rerun()
 
     exp_df = pd.DataFrame([{
@@ -2360,6 +2431,7 @@ with tab_inc_exp:
             })
         st.session_state.expenses = new_exp_state
         st.toast(f"✓ Applied — {len(new_exp_state)} expense(s) updated")
+        clear_asset_cache()
         st.rerun()
 
     st.divider()
@@ -2426,6 +2498,21 @@ with tab_inc_exp:
             table_data.append(row)
             
         st.dataframe(table_data, width="stretch", hide_index=True)
+        
+        st.markdown("---")
+        st.markdown("### 🔄 Auto-Sweep Surplus")
+        st.caption("Automatically invest your Annual Surplus into a virtual 'Unallocated Cash' asset. This asset will be available to fund future goals.")
+        sweep_cols = st.columns([1, 2, 2])
+        with sweep_cols[0]:
+            auto_sweep = st.toggle("Enable Auto-Sweep", value=st.session_state.get("auto_sweep_surplus", False), key=f"v{_v}_auto_sweep")
+        with sweep_cols[1]:
+            sweep_cagr = st.number_input("Sweep CAGR %", value=float(st.session_state.get("sweep_cagr", 8.0)), step=0.5, disabled=not auto_sweep, key=f"v{_v}_sweep_cagr")
+        
+        if auto_sweep != st.session_state.get("auto_sweep_surplus", False) or sweep_cagr != st.session_state.get("sweep_cagr", 8.0):
+            st.session_state.auto_sweep_surplus = auto_sweep
+            st.session_state.sweep_cagr = sweep_cagr
+            clear_asset_cache()
+            st.rerun()
 
 # ══════════════════════════════════════════════════════
 # GOALS
@@ -2450,12 +2537,12 @@ with tab_goals:
                 with col_a:
                     if st.button("Replace all goals", key=f"v{_v}_goal_replace"):
                         st.session_state.goals = new_goals
-                        _asset_value_at_year_cached.clear(); _compound_cached.clear(); _goal_occurrences_cached.clear()
+                        clear_asset_cache()
                         st.rerun()
                 with col_b:
                     if st.button("Append to existing", key=f"v{_v}_goal_append"):
                         st.session_state.goals.extend(new_goals)
-                        _asset_value_at_year_cached.clear(); _compound_cached.clear(); _goal_occurrences_cached.clear()
+                        clear_asset_cache()
                         st.rerun()
 
     goals_df = pd.DataFrame([{
@@ -2566,7 +2653,7 @@ with tab_goals:
             
         st.dataframe(rows, width="stretch", hide_index=True)
 
-    if st.session_state.assets and st.session_state.goals:
+    if get_effective_assets() and st.session_state.goals:
         st.markdown("### Class Mix Funding Each Goal")
         
         granular_rows = compute_granular_asset_allocation()
@@ -2588,10 +2675,11 @@ with tab_goals:
 # ══════════════════════════════════════════════════════
 with tab_assets:
     st.markdown("# 4. Assets")
-    if st.session_state.assets and len(st.session_state.assets) <= 15:
+    eff_assets = get_effective_assets()
+    if eff_assets and len(eff_assets) <= 15:
         st.plotly_chart(asset_chart(), width="stretch")
 
-    if st.session_state.assets:
+    if eff_assets:
         type_pie = asset_type_pie_chart()
         if type_pie:
             col_chart, col_cagr = st.columns([1, 1])
@@ -2600,7 +2688,7 @@ with tab_assets:
             with col_cagr:
                 ta_now = total_assets()
                 def calc_cls_cagr(target_cls):
-                    subset = [a for a in st.session_state.assets if a["asset_class"] == target_cls] if target_cls else st.session_state.assets
+                    subset = [a for a in eff_assets if a["asset_class"] == target_cls] if target_cls else eff_assets
                     sub_val = sum(a["value"] for a in subset)
                     if sub_val == 0: return 0.0
                     return sum((a["value"] / sub_val) * get_asset_eff_cagr(a) for a in subset)
@@ -2765,7 +2853,6 @@ with tab_assets:
             raw_inv = r.get("Invested", 0)
             inv = 0 if pd.isna(raw_inv) else int(parse_amount(str(raw_inv)))
 
-            # Fallback Current Value to Invested if left blank or zero
             if val <= 0 and inv > 0:
                 val = inv
 
@@ -2803,7 +2890,6 @@ with tab_assets:
             else:
                 cagr = manual_cagr
 
-            # Backcalculate maturity value if maturity date is present and maturity amount is blank or 0
             if mat <= 0 and cagr > 0 and mdate:
                 principal = inv if inv > 0 else val
                 mat = int(round(calc_asset_maturity(principal, cagr, pdate or str(TODAY), mdate)))
@@ -2845,15 +2931,15 @@ with tab_assets:
             f"applied. Please review and adjust if needed:** {names_str}"
         )
 
-    if st.session_state.assets:
-        with st.expander(f"📊 Asset Summary Table ({len(st.session_state.assets)} assets) — click to expand", expanded=False):
+    if eff_assets:
+        with st.expander(f"📊 Asset Summary Table ({len(eff_assets)} assets) — click to expand", expanded=False):
             ai = avg_inflation(); rows=[]
             tot_inv = 0
             tot_mat = 0
             tot_tax = 0
             tot_net = 0
             apply_tax = st.session_state.get("apply_tax_drag", False)
-            for a in st.session_state.assets:
+            for a in eff_assets:
                 tags   = ", ".join(a.get("tagged_goals") or []) or "—"
                 swp    = f'{fmt_full(a.get("swp_monthly",0) or 0)}/mo from {asset_swp_start_display(a)}' \
                          if (a.get("swp_monthly",0) or 0) > 0 else "—"
@@ -2876,7 +2962,7 @@ with tab_assets:
                     "Class":         a["asset_class"],
                     "Purchase Date": a.get("purchase_date","") or "—",
                     "Invested":      fmt_full(inv) if inv else "—",
-                    "Current Value": fmt_full(val),
+                    "Current Value": fmt_full(val) if not a.get("is_virtual_surplus") else "—",
                     "Maturity Amt":  fmt_full(mat) if mat else "—",
                     "Maturity Date": a.get("maturity_date","") or "—",
                     "CAGR":          f'{get_asset_eff_cagr(a):.2f}%' + (" (Net)" if apply_tax else ""),
@@ -3037,16 +3123,18 @@ with tab_retire:
 
         st.session_state.ret_goal_name = selected_goal_name
 
-        tagged_assets  = [a for a in st.session_state.assets if selected_goal_name in (a.get("tagged_goals") or [])]
+        eff_assets     = get_effective_assets()
+        tagged_assets  = [a for a in eff_assets if selected_goal_name in (a.get("tagged_goals") or [])]
         selected_goal  = next((g for g in all_goals if (g["name"] or f"Goal {all_goals.index(g)+1}") == selected_goal_name), None)
-        goal_year      = selected_goal.get("start_year", 1) if selected_goal else 0
+        
+        goal_year_rel  = cal_to_rel(selected_goal.get("start_year", THIS_YEAR)) if selected_goal else 0
         ai             = avg_inflation()
 
         if tagged_assets:
-            projected_corpus = sum(asset_value_at_year(a, goal_year, ai) for a in tagged_assets)
+            projected_corpus = sum(asset_value_at_year(a, goal_year_rel, ai) for a in tagged_assets)
             dominant_class   = max(set(a["asset_class"] for a in tagged_assets),
                 key=lambda c: sum(a["value"] for a in tagged_assets if a["asset_class"]==c))
-            st.caption(f"🏷️ {len(tagged_assets)} asset(s) tagged · projected at Yr {goal_year}: **{fmt_full(projected_corpus)}** · class: **{dominant_class}**")
+            st.caption(f"🏷️ {len(tagged_assets)} asset(s) tagged · projected at Yr {rel_to_cal(goal_year_rel)}: **{fmt_full(projected_corpus)}** · class: **{dominant_class}**")
         else:
             projected_corpus = 0.0
             dominant_class   = "Equity"
@@ -3092,9 +3180,8 @@ with tab_retire:
         st.divider()
         st.markdown("**Quarterly Withdrawal**")
         monthly_exp = total_monthly_expense()
-        goal_year_rel = cal_to_rel(goal_year) if goal_year > 1000 else max(goal_year, 0)
         suggested_qw = monthly_exp * 3 * (1 + ai/100) ** goal_year_rel
-        
+
         saved_qw = st.session_state.get("ret_q_withdrawal", 0) or 0
         default_qw = int(saved_qw) if saved_qw > 0 else (int(suggested_qw) if suggested_qw > 0 else 0)
         q_withdrawal = currency_input(
@@ -3102,7 +3189,7 @@ with tab_retire:
             default_qw,
             key=f"v{_v}_ret_qwd")
         if monthly_exp > 0:
-            st.caption(f"Suggested: {fmt_full(suggested_qw)} (3× monthly expenses inflated to Yr {goal_year})")
+            st.caption(f"Suggested: {fmt_full(suggested_qw)} (3× monthly expenses inflated to Yr {rel_to_cal(goal_year_rel)})")
 
         saved_winf = st.session_state.get("ret_w_inflation", 0.0) or 0.0
         default_winf = round(saved_winf, 1) if saved_winf > 0 else round(ai, 1)
