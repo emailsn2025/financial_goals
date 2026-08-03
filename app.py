@@ -153,10 +153,12 @@ def currency_input(label, value, key, **kwargs):
     return parse_amount(raw)
 
 def parse_date(s):
-    if not s: return TODAY
+    if not s or pd.isna(s): return TODAY
     if isinstance(s, date): return s
+    # Strip time component (e.g. '2045-03-01 00:00:00' -> '2045-03-01')
+    s_str = str(s).strip().split(' ')[0].split('T')[0]
     for fmt_str in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y"):
-        try: return datetime.strptime(str(s).strip(), fmt_str).date()
+        try: return datetime.strptime(s_str, fmt_str).date()
         except: pass
     return TODAY
 
@@ -2755,9 +2757,14 @@ with tab_assets:
             raw_name = r.get("Asset Name", "")
             name = "" if pd.isna(raw_name) else str(raw_name).strip()
             raw_val = r.get("Current Value", 0)
-            val = 0 if pd.isna(raw_val) else int(parse_amount(str(raw_val)))
-            if not name and val == 0: continue
+	    val = 0 if pd.isna(raw_val) else int(parse_amount(str(raw_val)))
+            raw_inv = r.get("Invested", 0)
+            inv = 0 if pd.isna(raw_inv) else int(parse_amount(str(raw_inv)))
 
+            # Fallback Current Value to Invested if left blank/0
+            if val <= 0 and inv > 0:
+            val = inv
+            
             raw_atype = r.get("Asset Type", "")
             atype = "" if pd.isna(raw_atype) else str(raw_atype).strip()
 
