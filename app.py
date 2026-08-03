@@ -1238,9 +1238,9 @@ def generate_full_pdf_report():
         f"<b>Total Liabilities:</b> {fmt(total_liabilities())} &nbsp;&nbsp; "
         f"<b>Total Net Worth:</b> {fmt(total_net_worth())}", normal_style))
     story.append(Paragraph(
-        f"<b>Monthly Income (Yr {eval_yr}):</b> {fmt(total_monthly_income())} &nbsp;&nbsp; "
-        f"<b>Monthly Expenses (Yr {eval_yr}):</b> {fmt(total_monthly_expense())} &nbsp;&nbsp; "
-        f"<b>Monthly Surplus (Yr {eval_yr}):</b> {fmt(monthly_surplus())}", normal_style))
+        f"<b>Annual Income (Yr {eval_yr}):</b> {fmt(total_monthly_income() * 12)} &nbsp;&nbsp; "
+        f"<b>Annual Expenses (Yr {eval_yr}):</b> {fmt(total_monthly_expense() * 12)} &nbsp;&nbsp; "
+        f"<b>Annual Surplus (Yr {eval_yr}):</b> {fmt(monthly_surplus() * 12)}", normal_style))
     story.append(Paragraph(
         f"<b>Weighted CAGR:</b> {weighted_cagr():.1f}% &nbsp;&nbsp; "
         f"<b>Risk Profile:</b> {risk_profile()}", normal_style))
@@ -1773,11 +1773,20 @@ tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_liab, tab_retire = st.tabs(
 # ══════════════════════════════════════════════════════
 with tab_dash:
     eval_yr = get_dashboard_eval_year()
-    c1,c2,c3,c4 = st.columns(4)
-    c1.metric("Total Net Worth",  fmt(total_net_worth()))
-    c2.metric(f"Monthly Income (Yr {eval_yr})",   fmt(total_monthly_income()))
-    c3.metric(f"Monthly Expenses (Yr {eval_yr})", fmt(total_monthly_expense()))
-    c4.metric(f"Monthly Surplus (Yr {eval_yr})",  fmt(monthly_surplus()))
+    
+    r1c1, r1c2, r1c3 = st.columns(3)
+    r1c1.metric("Total Assets", fmt(total_assets()))
+    r1c2.metric("Total Liabilities", fmt(total_liabilities()))
+    r1c3.metric("Total Net Worth (Assets - Liabilities)", fmt(total_net_worth()))
+
+    r2c1, r2c2, r2c3 = st.columns(3)
+    annual_inc = total_monthly_income() * 12
+    annual_exp = total_monthly_expense() * 12
+    annual_sur = monthly_surplus() * 12
+    
+    r2c1.metric(f"Annual Income (Yr {eval_yr})",   fmt(annual_inc))
+    r2c2.metric(f"Annual Expenses (Yr {eval_yr})", fmt(annual_exp))
+    r2c3.metric(f"Annual Surplus (Yr {eval_yr})",  fmt(annual_sur))
 
     if st.session_state.income or st.session_state.expenses:
         st.markdown("### Monthly Cash Flow")
