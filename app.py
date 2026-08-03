@@ -1999,8 +1999,8 @@ with tab_dash:
 
     # HTML TILE GENERATOR (Single-line to prevent markdown parsing errors)
     def make_tile(title, value, subtitle=""):
-        sub_html = f'<div style="color:#64748b; font-size:11px; margin-top:4px;">{subtitle}</div>' if subtitle else ""
-        return f'<div style="background:#1e293b; border-radius:10px; padding:16px 20px; border:1px solid #334155; display:flex; flex-direction:column; justify-content:center;"><div style="color:#94a3b8; font-size:13px; font-weight:600; margin-bottom:4px;">{title}</div><div style="color:#fff; font-size:24px; font-weight:700;">{value}</div>{sub_html}</div>'
+        sub_html = f'<div style="color:#64748b; font-size:14px; margin-top:4px; text-align:center;">{subtitle}</div>' if subtitle else ""
+        return f'<div style="background:#1e293b; border-radius:10px; padding:16px 20px; border:1px solid #334155; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;"><div style="color:#94a3b8; font-size:16px; font-weight:600; margin-bottom:4px;">{title}</div><div style="color:#fff; font-size:30px; font-weight:700;">{value}</div>{sub_html}</div>'
 
     # STRICT 4-COLUMN GRID (12 Tiles = 3 Rows of 4)
     dash_html = '<div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:14px; margin-bottom:24px;">'
