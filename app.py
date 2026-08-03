@@ -3092,8 +3092,9 @@ with tab_retire:
         st.divider()
         st.markdown("**Quarterly Withdrawal**")
         monthly_exp = total_monthly_expense()
-        suggested_qw = monthly_exp * 3 * (1 + ai/100) ** goal_year
-
+        goal_year_rel = cal_to_rel(goal_year) if goal_year > 1000 else max(goal_year, 0)
+        suggested_qw = monthly_exp * 3 * (1 + ai/100) ** goal_year_rel
+        
         saved_qw = st.session_state.get("ret_q_withdrawal", 0) or 0
         default_qw = int(saved_qw) if saved_qw > 0 else (int(suggested_qw) if suggested_qw > 0 else 0)
         q_withdrawal = currency_input(
