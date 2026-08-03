@@ -2752,21 +2752,17 @@ with tab_assets:
 
     if apply_assets:
         new_assets_state = []
-        defaulted_cagr_assets = []
-        for _, r in edited_assets.iterrows():
-            raw_name = r.get("Asset Name", "")
-            name = "" if pd.isna(raw_name) else str(raw_name).strip()
-            raw_val = r.get("Current Value", 0)
+        raw_val = r.get("Current Value", 0)
             val = 0 if pd.isna(raw_val) else int(parse_amount(str(raw_val)))
+
             raw_inv = r.get("Invested", 0)
             inv = 0 if pd.isna(raw_inv) else int(parse_amount(str(raw_inv)))
 
-            # Fallback Current Value to Invested if left blank/0
             if val <= 0 and inv > 0:
-            val = inv
-            
-            raw_atype = r.get("Asset Type", "")
-            atype = "" if pd.isna(raw_atype) else str(raw_atype).strip()
+                val = inv
+
+            if not name and val == 0:
+                continue
 
             raw_inv = r.get("Invested", 0)
             inv = 0 if pd.isna(raw_inv) else int(parse_amount(str(raw_inv)))
