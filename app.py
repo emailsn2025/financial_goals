@@ -170,6 +170,8 @@ def calc_asset_cagr(invested, maturity_amt, purchase_date_str, maturity_date_str
     except: return 0.0
 
 def asset_tax_rate(asset_class):
+    if not st.session_state.get("apply_tax_drag", False):
+        return 0.0
     rate = st.session_state.get(f"tax_rate_{asset_class}", DEFAULT_TAX_RATES.get(asset_class, 30.0))
     return float(rate) / 100.0
 
@@ -1499,6 +1501,13 @@ def generate_full_pdf_report():
             tags = ", ".join(a.get("tagged_goals") or []) or "—"
             swp  = f'{fmt_full(a.get("swp_monthly",0) or 0)}/mo from {asset_swp_start_display(a)}' \
                    if (a.get("swp_monthly") or 0) > 0 else "—"
+            
+            inv = a.get("invested",0) or 0
+            mat = a.get("maturity_amt",0) or 0
+            net_m, tax_m = asset_net_maturity(inv, mat, a["asset_class"]) if (mat>0 and inv>0) else (0,0)
+            tax_disp = fmt_full(tax_m) if (tax_m and st.session_state.get("apply_tax_drag")) else "—"
+            net_disp = fmt_full(net_m) if (net_m and st.session_state.get("apply_tax_drag")) else (fmt_full(mat) if mat else "—")
+            
             rows.append([
                 a["name"] or "—", a.get("asset_type","") or "—", a["asset_class"], fmt_full(a["value"]), f'{get_asset_eff_cagr(a):.2f}%',
                 tags, swp,
@@ -1849,7 +1858,7 @@ tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_liab, tab_retire = st.tabs([
 # DASHBOARD
 # ══════════════════════════════════════════════════════
 with tab_dash:
-    st.markdown("# 1. Dashboard")
+    st.markdown("# Dashboard")
     eval_yr = get_dashboard_eval_year()
     alloc_list = smart_allocation()
     
@@ -2177,7 +2186,7 @@ with tab_dash:
 # INCOME & EXPENSES
 # ══════════════════════════════════════════════════════
 with tab_inc_exp:
-    st.markdown("# 2. Income & Expenses")
+    st.markdown("# Income & Expenses")
     if st.session_state.expenses or st.session_state.income:
         st.plotly_chart(expense_income_chart(), width="stretch")
 
@@ -2392,7 +2401,7 @@ with tab_inc_exp:
 # GOALS
 # ══════════════════════════════════════════════════════
 with tab_goals:
-    st.markdown("# 3. Goals")
+    st.markdown("# Goals")
     st.markdown("### 🎯 Financial Goals")
 
     with st.expander("📥 Import Goals from Excel", expanded=False):
@@ -2548,7 +2557,7 @@ with tab_goals:
 # ASSETS
 # ══════════════════════════════════════════════════════
 with tab_assets:
-    st.markdown("# 4. Assets")
+    st.markdown("# Assets")
     if st.session_state.assets and len(st.session_state.assets) <= 15:
         st.plotly_chart(asset_chart(), width="stretch")
 
@@ -2613,7 +2622,7 @@ with tab_assets:
         with td_col1:
             st.toggle("Apply Automatic Tax Drag", key="apply_tax_drag", on_change=clear_asset_cache)
         with td_col2:
-            st.caption("When enabled, the app automatically reduces your Expected CAGR for all projections to a net (post-tax) return based on the asset class's standard LTCG tax rate below.")
+            st.caption("When enabled, the app automatically applies taxes to your Expected CAGRs, Maturity Amounts, and Retirement Drawdowns based on the asset class's standard LTCG tax rate below.")
 
         st.markdown("##### Custom Tax Rates by Class (%)")
         tr_cols = st.columns(5)
@@ -2808,8 +2817,8 @@ with tab_assets:
                     "Maturity Amt":  fmt_full(mat) if mat else "—",
                     "Maturity Date": a.get("maturity_date","") or "—",
                     "CAGR":          f'{get_asset_eff_cagr(a):.2f}%' + (" (Net)" if st.session_state.get("apply_tax_drag") else ""),
-                    "Tax on Gains":  fmt_full(tax_m) if tax_m else "—",
-                    "Net Maturity":  fmt_full(net_m) if net_m else "—",
+                    "Tax on Gains":  fmt_full(tax_m) if (tax_m and st.session_state.get("apply_tax_drag")) else "—",
+                    "Net Maturity":  fmt_full(net_m) if (net_m and st.session_state.get("apply_tax_drag")) else (fmt_full(mat) if mat else "—"),
                     "Tagged Goals":  tags,
                     "SWP":           swp,
                     "5 Yrs":         fmt_full(asset_value_at_year(a, 5, ai)),
@@ -2826,8 +2835,8 @@ with tab_assets:
                 "Maturity Amt":  fmt_full(tot_mat) if tot_mat else "—",
                 "Maturity Date": "",
                 "CAGR":          f"{weighted_cagr():.1f}%",
-                "Tax on Gains":  fmt_full(tot_tax) if tot_tax else "—",
-                "Net Maturity":  fmt_full(tot_net) if tot_net else "—",
+                "Tax on Gains":  fmt_full(tot_tax) if (tot_tax and st.session_state.get("apply_tax_drag")) else "—",
+                "Net Maturity":  fmt_full(tot_net) if (tot_net and st.session_state.get("apply_tax_drag")) else (fmt_full(tot_mat) if tot_mat else "—"),
                 "Tagged Goals":  "",
                 "SWP":           "",
                 "5 Yrs":         fmt_full(portfolio_at_year(5)),
@@ -3007,7 +3016,10 @@ with tab_retire:
             key=f"v{_v}_ret_cls")
 
         tax_rate_display = asset_tax_rate(asset_class_for_tax)
-        st.caption(f"LTCG tax rate: **{tax_rate_display*100:.1f}%** (based on settings) — on gain portion only")
+        if not st.session_state.get("apply_tax_drag"):
+            st.caption("LTCG tax rate: **0.0%** (Automatic Tax Drag is currently turned **OFF** in Assets tab)")
+        else:
+            st.caption(f"LTCG tax rate: **{tax_rate_display*100:.1f}%** (based on settings) — on gain portion only")
 
         custom_tax = st.number_input("Override Tax Rate % (0 = use settings)",
             value=float(st.session_state.get("ret_custom_tax", 0.0) or 0.0),
@@ -3147,7 +3159,7 @@ Withdrawal inflates every year at your chosen rate.
                 "Return %":         f"{annual_return:.1f}%",
                 "Gross Return":     fmt_full(round(a["Total Gross Return"])),
                 "Gain Portion":     fmt_full(round(a["Total Gain Portion"])),
-                "Tax Rate":         f"{(effective_tax or tax_rate_display)*100:.1f}%",
+                "Tax Rate":         f"{(effective_tax or (asset_tax_rate(asset_class_for_tax) if st.session_state.get('apply_tax_drag') else 0.0))*100:.1f}%",
                 "Tax Paid":         fmt_full(round(a["Total Tax"])),
                 "Net Return":       fmt_full(round(a["Total Net Return"])),
                 "Net Gain":         fmt_full(round(a["Net Gain"])),
