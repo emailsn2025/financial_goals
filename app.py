@@ -1979,13 +1979,8 @@ with tab_dash:
     annual_sur = monthly_surplus() * 12
 
     def make_tile(title, value, subtitle=""):
-        return f'''
-        <div style="background:#1e293b; border-radius:10px; padding:16px 20px; border:1px solid #334155; display:flex; flex-direction:column; justify-content:center;">
-            <div style="color:#94a3b8; font-size:13px; font-weight:600; margin-bottom:4px;">{title}</div>
-            <div style="color:#fff; font-size:24px; font-weight:700;">{value}</div>
-            {f'<div style="color:#64748b; font-size:11px; margin-top:4px;">{subtitle}</div>' if subtitle else ''}
-        </div>
-        '''
+        sub_html = f'<div style="color:#64748b; font-size:11px; margin-top:4px;">{subtitle}</div>' if subtitle else ""
+        return f'<div style="background:#1e293b; border-radius:10px; padding:16px 20px; border:1px solid #334155; display:flex; flex-direction:column; justify-content:center;"><div style="color:#94a3b8; font-size:13px; font-weight:600; margin-bottom:4px;">{title}</div><div style="color:#fff; font-size:24px; font-weight:700;">{value}</div>{sub_html}</div>'
 
     dash_html = '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:14px; margin-bottom:24px;">'
     dash_html += make_tile("Total Assets", fmt(total_assets()))
