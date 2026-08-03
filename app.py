@@ -50,7 +50,7 @@ st.markdown("""
     div[data-testid="stMetric"] { border: 1px solid rgba(128,128,128,0.2); border-radius: 10px; padding: 12px 16px; }
     div[data-testid="stMetric"] label { font-size: 13px !important; }
     
-    /* Aggressively Enlarge Tab Headers (Change 1: Increased font size) */
+    /* Aggressively Enlarge Tab Headers (Increased Font Size to 28px) */
     .stTabs button p, .stTabs button span {
         font-size: 28px !important;
         font-weight: 700 !important;
@@ -155,7 +155,6 @@ def currency_input(label, value, key, **kwargs):
 def parse_date(s):
     if not s or pd.isna(s): return TODAY
     if isinstance(s, date): return s
-    # Strip time component (e.g. '2045-03-01 00:00:00' -> '2045-03-01')
     s_str = str(s).strip().split(' ')[0].split('T')[0]
     for fmt_str in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y"):
         try: return datetime.strptime(s_str, fmt_str).date()
@@ -947,6 +946,9 @@ def import_assets_from_excel(uploaded_file):
             if not cagr_provided:
                 a["cagr"] = DEFAULT_CAGR_BY_CLASS.get(cls, 8.0)
                 defaulted_cagr_list.append((a["name"] or "(unnamed)", cls, a["cagr"]))
+
+            if a["value"] <= 0 and inv > 0:
+                a["value"] = inv
 
             if a["maturity_amt"] <= 0 and a["cagr"] > 0 and mdate:
                 principal = inv if inv > 0 else a["value"]
@@ -2752,24 +2754,33 @@ with tab_assets:
 
     if apply_assets:
         new_assets_state = []
-        raw_val = r.get("Current Value", 0)
+        defaulted_cagr_assets = []
+        for _, r in edited_assets.iterrows():
+            raw_name = r.get("Asset Name", "")
+            name = "" if pd.isna(raw_name) else str(raw_name).strip()
+            
+            raw_val = r.get("Current Value", 0)
             val = 0 if pd.isna(raw_val) else int(parse_amount(str(raw_val)))
 
             raw_inv = r.get("Invested", 0)
             inv = 0 if pd.isna(raw_inv) else int(parse_amount(str(raw_inv)))
 
+            # Fallback Current Value to Invested if left blank or zero
             if val <= 0 and inv > 0:
                 val = inv
 
             if not name and val == 0:
                 continue
 
-            raw_inv = r.get("Invested", 0)
-            inv = 0 if pd.isna(raw_inv) else int(parse_amount(str(raw_inv)))
+            raw_atype = r.get("Asset Type", "")
+            atype = "" if pd.isna(raw_atype) else str(raw_atype).strip()
+
             raw_mat = r.get("Maturity Amount", 0)
             mat = 0 if pd.isna(raw_mat) else int(parse_amount(str(raw_mat)))
+
             raw_pdate = r.get("Purchase Date", "")
             pdate = "" if pd.isna(raw_pdate) else str(raw_pdate).strip()
+
             raw_mdate = r.get("Maturity Date", "")
             mdate = "" if pd.isna(raw_mdate) else str(raw_mdate).strip()
 
@@ -2792,7 +2803,7 @@ with tab_assets:
             else:
                 cagr = manual_cagr
 
-            # Change 2: Backcalculate maturity value if maturity date is present and maturity amount is blank/0
+            # Backcalculate maturity value if maturity date is present and maturity amount is blank or 0
             if mat <= 0 and cagr > 0 and mdate:
                 principal = inv if inv > 0 else val
                 mat = int(round(calc_asset_maturity(principal, cagr, pdate or str(TODAY), mdate)))
@@ -2859,7 +2870,6 @@ with tab_assets:
                 tot_tax += tax_m if apply_tax else 0
                 tot_net += net_m if apply_tax else mat
                 
-                # Change 3: Dynamically format Tax on Gains and Net Maturity based on tax drag toggle
                 rows.append({
                     "Asset":         a["name"] or "(unnamed)",
                     "Type":          a.get("asset_type","") or "—",
