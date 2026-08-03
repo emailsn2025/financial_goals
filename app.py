@@ -1781,7 +1781,8 @@ st.markdown("""
 <b style="color:#93c5fd;">Step 1 — Income &amp; Expenses</b><br/>
 Enter monthly income sources (salary, rental, freelance) in the spreadsheet-style table — each with
 its own growth rate and active start/end years. Do the same for expenses (rent, groceries, loan EMIs)
-with an inflation rate per item. Add or delete rows directly in the table, or bulk-import via Excel.
+with an inflation rate per item. Add or delete rows directly in the table, or bulk-import via Excel. 
+<br/><i style="color:#a5b4fc;">New: You can enable the <b>Auto-Sweep Surplus</b> toggle at the bottom of this tab to automatically capture your unspent income each year and sweep it into a virtual "Unallocated Cash" asset growing at a custom rate. This virtual asset will automatically be used to fund your future goals!</i>
 
 <br/><br/><b style="color:#93c5fd;">Step 2 — Goals</b><br/>
 Add financial goals with a cost in today's money, a start year, end year, and recurrence frequency.
@@ -1814,7 +1815,7 @@ shortfall banner, and personalized recommendations.
 <br/><br/><b style="color:#93c5fd;">Tips</b><br/>
 • Tag assets to goals for more accurate, ring-fenced allocation<br/>
 • Use <b>💾 Save &amp; Load</b> below to download your data as a file and reload it next session —
-  this includes your custom tax rates and Retirement tab settings too<br/>
+  this includes your custom tax rates, Auto-Sweep settings, and Retirement tab settings too<br/>
 • Use <b>📄 Export All Tabs to PDF</b> to generate a single shareable report with every chart and table<br/>
 • Import Income, Expenses, Goals, Assets, and Liabilities in bulk via Excel — look for the import panel in each tab<br/>
 • All figures use plain comma-grouped numbers with Million/Billion abbreviations for large amounts —
