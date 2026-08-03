@@ -220,7 +220,7 @@ def asset_value_at_year(a, target_year, avg_inf=6.0):
 
 for key, default in [
     ("income", []), ("expenses", []), ("goals", []), ("assets", []),
-    ("projection_years", 30), ("data_version", 0),
+    ("projection_years", 30), ("data_version", 0), ("liabilities", 0),
     ("ret_opening_corpus", 0), ("ret_goal_name", ""),
     ("ret_annual_return", 8.0), ("ret_tax_class", "Equity"),
     ("ret_custom_tax", 0.0), ("ret_q_withdrawal", 0), ("ret_w_inflation", 6.0),
@@ -241,10 +241,8 @@ def get_dashboard_eval_year():
     items = st.session_state.income + st.session_state.expenses
     if not items: return base_yr
     
-    # Check if there's any active income or expense in the base year
     active_in_base = any(int(e.get("start_year", base_yr) or base_yr) <= base_yr <= int(e.get("end_year", 2100) or 2100) for e in items)
     
-    # If nothing is active yet, find the earliest future start year so dashboard doesn't just display zeroes
     if not active_in_base:
         future_years = [int(e.get("start_year", base_yr) or base_yr) for e in items if int(e.get("start_year", base_yr) or base_yr) > base_yr]
         if future_years:
@@ -270,23 +268,24 @@ def avg_inflation():
     if tm == 0: return 6.0
     return sum((e["monthly"]/tm)*e["inflation"] for e in active)
 
-def total_net_worth():  return sum(a["value"] for a in st.session_state.assets)
+def total_assets():     return sum(a["value"] for a in st.session_state.assets)
+def total_net_worth():  return total_assets() - st.session_state.get("liabilities", 0)
 def monthly_surplus():  return total_monthly_income() - total_monthly_expense()
 
 def weighted_cagr():
-    tnw = total_net_worth()
-    if tnw == 0: return 0.0
-    return sum((a["value"]/tnw)*a["cagr"] for a in st.session_state.assets)
+    ta = total_assets()
+    if ta == 0: return 0.0
+    return sum((a["value"]/ta)*a["cagr"] for a in st.session_state.assets)
 
 def portfolio_at_year(y):
     ai = avg_inflation()
     return sum(asset_value_at_year(a, y, ai) for a in st.session_state.assets)
 
 def risk_profile():
-    tnw = total_net_worth()
-    if tnw == 0: return "N/A"
-    eq   = sum(a["value"] for a in st.session_state.assets if a["asset_class"]=="Equity")/tnw*100
-    debt = sum(a["value"] for a in st.session_state.assets if a["asset_class"] in ["Debt","Other"])/tnw*100
+    ta = total_assets()
+    if ta == 0: return "N/A"
+    eq   = sum(a["value"] for a in st.session_state.assets if a["asset_class"]=="Equity")/ta*100
+    debt = sum(a["value"] for a in st.session_state.assets if a["asset_class"] in ["Debt","Other"])/ta*100
     if eq   > 70: return "Aggressive"
     if debt > 60: return "Conservative"
     return "Balanced"
@@ -307,7 +306,7 @@ def goal_frequency(g):
     return max(int(g.get("frequency", 0) or 0), 0)
 
 def goal_uses_cumulative(g):
-    return goal_frequency(g) > 0 or bool(g.get("cumulative", False))
+    return goal_frequency(g) > 0
 
 @st.cache_data(max_entries=256)
 def _goal_occurrences_cached(base, inf, start, end, freq):
@@ -666,7 +665,7 @@ def get_recommendations():
     recs  = []
     alloc = smart_allocation()
     ai    = avg_inflation()
-    tnw   = total_net_worth()
+    ta    = total_assets()
 
     shortfalls = [a for a in alloc if a["pct"] < 100]
     if shortfalls:
@@ -686,12 +685,12 @@ def get_recommendations():
         recs.append(("🔄","Horizon Matching",
             "Goals within 3 years detected. Consider shifting equity into debt for capital protection."))
 
-    if tnw > 0:
+    if ta > 0:
         ct = {}
         for a in st.session_state.assets: ct[a["asset_class"]] = ct.get(a["asset_class"],0)+a["value"]
         for cls, val in ct.items():
-            if (val/tnw)*100 > 60:
-                recs.append(("⚖️","Diversification Alert", f"{cls} is {round((val/tnw)*100)}% of portfolio."))
+            if (val/ta)*100 > 60:
+                recs.append(("⚖️","Diversification Alert", f"{cls} is {round((val/ta)*100)}% of portfolio."))
 
     tm = total_monthly_expense()
     if tm > 0:
@@ -722,7 +721,6 @@ def import_goals_from_excel(uploaded_file):
             "start_year":  ["start year","start","from year","target year","year"],
             "end_year":    ["end year","end","to year","until year"],
             "frequency":   ["frequency (yrs)","frequency (years)","frequency","freq","every n years","recurrence"],
-            "cumulative":  ["cumulative","cum"],
         }
         def find_col(df, options):
             for o in options:
@@ -732,7 +730,7 @@ def import_goals_from_excel(uploaded_file):
         new_goals = []
         for _, row in df.iterrows():
             g = {"name":"","current_cost":0,"inflation":6.0,
-                 "start_year":1,"end_year":1,"frequency":0,"cumulative":False}
+                 "start_year":1,"end_year":1,"frequency":0}
             for field, options in col_map.items():
                 c = find_col(df, options)
                 if c and pd.notna(row[c]):
@@ -747,8 +745,6 @@ def import_goals_from_excel(uploaded_file):
                         g[field] = max(2000, min(raw_yr, 2100))
                     elif field == "frequency":
                         g[field] = int(float(str(val).strip() or 0))
-                    elif field == "cumulative":
-                        g[field] = str(val).strip().lower() in ("true","yes","1","y")
                     else:
                         g[field] = str(val).strip()
             g["end_year"] = max(g["end_year"], g["start_year"])
@@ -879,7 +875,6 @@ def import_expenses_from_excel(uploaded_file):
             "inflation":  ["inflation %","inflation","inflation rate","rate"],
             "start_year": ["start year","start","from year","from"],
             "end_year":   ["end year","end","to year","until","to"],
-            "cumulative": ["cumulative","cum"],
         }
         def find_col(df, options):
             for o in options:
@@ -887,7 +882,7 @@ def import_expenses_from_excel(uploaded_file):
             return None
         new_expenses = []
         for _, row in df.iterrows():
-            exp = {"name":"","monthly":0,"inflation":6.0,"start_year":THIS_YEAR,"end_year":THIS_YEAR+30,"cumulative":False}
+            exp = {"name":"","monthly":0,"inflation":6.0,"start_year":THIS_YEAR,"end_year":THIS_YEAR+30}
             for field, options in col_map.items():
                 c = find_col(df, options)
                 if c and pd.notna(row[c]):
@@ -898,7 +893,6 @@ def import_expenses_from_excel(uploaded_file):
                         raw = int(float(str(val).strip() or THIS_YEAR))
                         if raw <= 1000: raw = THIS_YEAR + raw
                         exp[field] = max(2000, min(raw, 2100))
-                    elif field == "cumulative": exp[field] = str(val).strip().lower() in ("true","yes","1","y")
                     else: exp[field] = str(val).strip()
             exp["end_year"] = max(exp["end_year"], exp["start_year"])
             new_expenses.append(exp)
@@ -1004,10 +998,10 @@ def asset_type_pie_chart():
 def nw_bar_chart():
     max_y = max(30, max((goal_end_year(g) for g in st.session_state.goals), default=30))
     years = list(range(0, max_y+1, 5))
-    vals  = [portfolio_at_year(y) for y in years]
+    vals  = [portfolio_at_year(y) - st.session_state.get("liabilities", 0) for y in years]
     fig   = go.Figure(go.Bar(x=[f"Yr {y}" for y in years], y=vals,
         marker_color="#2563eb", hovertemplate="%{y:,.0f}<extra></extra>"))
-    fig.update_layout(title="Net Worth Projection (net of SWP)", template=None, height=350,
+    fig.update_layout(title="Net Worth Projection (net of SWP & Liabilities)", template=None, height=350,
         margin=dict(l=60,r=20,t=50,b=40), yaxis_title="Amount")
     return fig
 
@@ -1168,7 +1162,10 @@ def generate_full_pdf_report():
     eval_yr = get_dashboard_eval_year()
     story.append(Paragraph("Dashboard", heading_style))
     story.append(Paragraph(
-        f"<b>Total Net Worth:</b> {fmt(total_net_worth())} &nbsp;&nbsp; "
+        f"<b>Total Assets:</b> {fmt(total_assets())} &nbsp;&nbsp; "
+        f"<b>Total Liabilities:</b> {fmt(st.session_state.get('liabilities', 0))} &nbsp;&nbsp; "
+        f"<b>Total Net Worth:</b> {fmt(total_net_worth())}", normal_style))
+    story.append(Paragraph(
         f"<b>Monthly Income (Yr {eval_yr}):</b> {fmt(total_monthly_income())} &nbsp;&nbsp; "
         f"<b>Monthly Expenses (Yr {eval_yr}):</b> {fmt(total_monthly_expense())} &nbsp;&nbsp; "
         f"<b>Monthly Surplus (Yr {eval_yr}):</b> {fmt(monthly_surplus())}", normal_style))
@@ -1273,13 +1270,12 @@ def generate_full_pdf_report():
 
     if st.session_state.expenses:
         story.append(Paragraph("Monthly Expenses", sub_style))
-        headers = ["Name","Monthly","Inflation %","Start Year","End Year","Cumulative"]
+        headers = ["Name","Monthly","Inflation %","Start Year","End Year"]
         rows = [[e["name"] or "—", fmt_full(e["monthly"]), f'{e["inflation"]}%',
-                 str(e.get("start_year", THIS_YEAR)), str(e.get("end_year", THIS_YEAR+30)),
-                 "Yes" if e.get("cumulative") else "No"]
+                 str(e.get("start_year", THIS_YEAR)), str(e.get("end_year", THIS_YEAR+30))]
                 for e in st.session_state.expenses]
         tot_monthly = sum(e["monthly"] for e in st.session_state.expenses)
-        rows.append(["TOTAL", fmt_full(tot_monthly), "", "", "", ""])
+        rows.append(["TOTAL", fmt_full(tot_monthly), "", "", ""])
         story.append(_pdf_table(headers, rows))
     story.append(PageBreak())
 
@@ -1335,7 +1331,7 @@ def generate_full_pdf_report():
 
     story.append(Paragraph("Asset Portfolio", heading_style))
     story.append(Paragraph(
-        f"<b>Total:</b> {fmt_full(total_net_worth())} &nbsp;&nbsp; "
+        f"<b>Total Assets:</b> {fmt_full(total_assets())} &nbsp;&nbsp; "
         f"<b>Weighted CAGR:</b> {weighted_cagr():.1f}%", normal_style))
     story.append(Spacer(1, 6))
     if st.session_state.assets:
@@ -1369,7 +1365,7 @@ def generate_full_pdf_report():
                 tags, swp,
                 fmt_full(asset_value_at_year(a,5,ai)), fmt_full(asset_value_at_year(a,10,ai)), fmt_full(asset_value_at_year(a,20,ai)),
             ])
-        rows.append(["TOTAL","","", fmt_full(total_net_worth()), f"{weighted_cagr():.1f}%", "", "",
+        rows.append(["TOTAL","","", fmt_full(total_assets()), f"{weighted_cagr():.1f}%", "", "",
                       fmt_full(portfolio_at_year(5)), fmt_full(portfolio_at_year(10)), fmt_full(portfolio_at_year(20))])
         story.append(_pdf_table(headers, rows, font_size=6.5))
     story.append(PageBreak())
@@ -1598,6 +1594,7 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
                 "income":st.session_state.income, "expenses":st.session_state.expenses,
                 "projection_years":st.session_state.projection_years,
                 "goals":st.session_state.goals, "assets":st.session_state.assets,
+                "liabilities": st.session_state.get("liabilities", 0),
                 "ret_opening_corpus": st.session_state.get("ret_opening_corpus", 0),
                 "ret_goal_name":      st.session_state.get("ret_goal_name", ""),
                 "ret_annual_return":  st.session_state.get("ret_annual_return", 8.0),
@@ -1617,7 +1614,7 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
         if st.session_state.get("_pending_load"):
             if st.button("✅ Apply Loaded Data", use_container_width=True, type="primary"):
                 d = st.session_state.pop("_pending_load")
-                for k in ["income","expenses","goals","assets","projection_years",
+                for k in ["income","expenses","goals","assets","projection_years","liabilities",
                           "ret_opening_corpus","ret_goal_name","ret_annual_return",
                           "ret_tax_class","ret_custom_tax","ret_q_withdrawal","ret_w_inflation"]:
                     if k in d: st.session_state[k] = d[k]
@@ -1630,6 +1627,7 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
         if st.button("🔄 Reset to Empty", use_container_width=True):
             for k in ["income","expenses","goals","assets"]: st.session_state[k] = []
             st.session_state.projection_years = 30
+            st.session_state.liabilities = 0
             st.session_state.ret_opening_corpus = 0
             st.session_state.ret_goal_name      = ""
             st.session_state.ret_annual_return  = 8.0
@@ -1675,6 +1673,14 @@ tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_retire = st.tabs(
 # DASHBOARD
 # ══════════════════════════════════════════════════════
 with tab_dash:
+    dash_top1, dash_top2 = st.columns([3, 1])
+    with dash_top2:
+        st.session_state.liabilities = currency_input(
+            "Outstanding Debt (Deducted from NW)",
+            st.session_state.get("liabilities", 0),
+            key=f"v{_v}_liabilities"
+        )
+
     eval_yr = get_dashboard_eval_year()
     c1,c2,c3,c4 = st.columns(4)
     c1.metric("Total Net Worth",  fmt(total_net_worth()))
@@ -1753,7 +1759,7 @@ with tab_dash:
         mc1,mc2,mc3 = st.columns(3)
         mc1.metric("Weighted CAGR",     f"{weighted_cagr():.1f}%")
         mc2.metric("Risk Profile",      risk_profile())
-        mc3.metric("10-Year Projection",fmt(portfolio_at_year(10)))
+        mc3.metric("10-Year Projection",fmt(portfolio_at_year(10) - st.session_state.get("liabilities", 0)))
 
     recs = get_recommendations()
     if recs:
@@ -1772,8 +1778,8 @@ with tab_dash:
         )
         alloc_list       = smart_allocation()
         ai               = avg_inflation()
-        tnw              = total_net_worth()
-        eq_pct           = sum(a["value"] for a in st.session_state.assets if a["asset_class"]=="Equity") / tnw * 100 if tnw > 0 else 0
+        ta               = total_assets()
+        eq_pct           = sum(a["value"] for a in st.session_state.assets if a["asset_class"]=="Equity") / ta * 100 if ta > 0 else 0
         wcagr_pct        = weighted_cagr()
         wcagr            = wcagr_pct / 100
 
@@ -1879,7 +1885,7 @@ with tab_dash:
                         )
                 if zero_cagr_val > 0:
                     st.warning(
-                        f"**{fmt(zero_cagr_val)} ({zero_cagr_val/max(total_net_worth(),1)*100:.0f}% of portfolio) "
+                        f"**{fmt(zero_cagr_val)} ({zero_cagr_val/max(total_assets(),1)*100:.0f}% of portfolio) "
                         f"has 0% CAGR.** These assets earn nothing in projections, dragging down your "
                         f"weighted CAGR to {weighted_cagr():.1f}%. Go to Assets tab and enter expected "
                         f"returns for: " +
@@ -1890,8 +1896,7 @@ with tab_dash:
                     names = ", ".join(g.get("name","?") for g in recurring_goals)
                     st.info(
                         f"ℹ️ **Recurring goals are always funded against their full multi-year cost:** "
-                        f"{names}. Even if the Cumulative checkbox in the Goals tab isn't ticked, "
-                        f"the app treats a recurring commitment (e.g. school fees every year) as needing "
+                        f"{names}. The app treats a recurring commitment (e.g. school fees every year) as needing "
                         f"the SUM of all its payments — not just the first one — before calling it funded."
                     )
 
@@ -1910,12 +1915,12 @@ with tab_dash:
                 f'<strong style="color:#fff; font-size:17px;">{fmt(surplus_today)}</strong> '
                 f'<b>in today\'s money</b> (as of {THIS_YEAR}).<br/>'
                 f'<em style="color:#a7f3d0; font-size:12px;">Note: surplus accuracy depends on correct '
-                f'CAGRs and cumulative settings — see warnings above.</em>'
+                f'CAGRs — see warnings above.</em>'
                 f'</div></div>',
                 unsafe_allow_html=True,
             )
             s1, s2, s3, s4 = st.columns(4)
-            s1.metric("Net Worth Today",   fmt(total_net_worth()))
+            s1.metric("Total Assets",      fmt(total_assets()))
             s2.metric("Total Goal Cost",   fmt(total_cost_all))
             s3.metric("Weighted CAGR",     f"{weighted_cagr():.1f}%")
             s4.metric("Surplus (Today's Money)", fmt(surplus_today))
@@ -2073,7 +2078,7 @@ with tab_inc_exp:
     st.caption(f"Total: {fmt_full(total_monthly_expense())}/month · Avg inflation: {avg_inflation():.1f}%")
 
     with st.expander("📥 Import Expenses from Excel", expanded=False):
-        st.caption("Columns: Name | Monthly | Inflation % | Start Year | End Year | Cumulative")
+        st.caption("Columns: Name | Monthly | Inflation % | Start Year | End Year")
         exp_file = st.file_uploader("Upload Expenses Excel", type=["xlsx","xls"], key=f"v{_v}_exp_upload")
         if exp_file:
             new_exp, err = import_expenses_from_excel(exp_file)
@@ -2099,11 +2104,10 @@ with tab_inc_exp:
         "Inflation %":  float(e.get("inflation", 6.0) or 6.0),
         "Start Year":   int(e.get("start_year", THIS_YEAR) or THIS_YEAR),
         "End Year":     int(e.get("end_year", THIS_YEAR + 30) or THIS_YEAR + 30),
-        "Cumulative":   bool(e.get("cumulative", False)),
     } for e in st.session_state.expenses])
 
     if exp_df.empty:
-        exp_df = pd.DataFrame(columns=["Name", "Monthly", "Inflation %", "Start Year", "End Year", "Cumulative"])
+        exp_df = pd.DataFrame(columns=["Name", "Monthly", "Inflation %", "Start Year", "End Year"])
 
     edited_exp = st.data_editor(
         exp_df,
@@ -2116,7 +2120,6 @@ with tab_inc_exp:
             "Inflation %": st.column_config.NumberColumn("Inflation %", format="%.1f", min_value=0.0, max_value=30.0, step=0.5),
             "Start Year":  st.column_config.NumberColumn("Start Year", format="%d", min_value=2000, max_value=2100, step=1),
             "End Year":    st.column_config.NumberColumn("End Year", format="%d", min_value=2000, max_value=2100, step=1),
-            "Cumulative":  st.column_config.CheckboxColumn("Cumulative"),
         }
     )
     st.caption("Edits above are staged in the table — nothing recalculates until you click Apply.")
@@ -2136,7 +2139,6 @@ with tab_inc_exp:
                 "inflation":  float(safe_cell(r, "Inflation %", 6.0)),
                 "start_year": int(safe_cell(r, "Start Year", THIS_YEAR)),
                 "end_year":   int(safe_cell(r, "End Year", THIS_YEAR + 30)),
-                "cumulative": bool(safe_cell(r, "Cumulative", False)),
             })
         st.session_state.expenses = new_exp_state
         st.toast(f"✓ Applied — {len(new_exp_state)} expense(s) updated")
@@ -2184,17 +2186,8 @@ with tab_inc_exp:
                 if cal_y < e_start or cal_y > e_end:
                     row[e["name"] or "—"] = "—"; continue
                 
-                if e.get("cumulative"):
-                    cum_val = 0.0
-                    for yr_cal in range(e_start, cal_y + 1):
-                        yr_idx = yr_cal - proj_start
-                        if yr_idx >= 0:
-                            cum_val += compound(e["monthly"], e["inflation"], yr_idx) * 12
-                    row[e["name"] or "—"] = fmt_full(round(cum_val))
-                    total += cum_val
-                else:
-                    v = compound(e["monthly"], e["inflation"], y)
-                    row[e["name"] or "—"] = fmt_full(round(v)); total += v
+                v = compound(e["monthly"], e["inflation"], y)
+                row[e["name"] or "—"] = fmt_full(round(v)); total += v
             row["Total Expenses"] = fmt_full(total)
 
             monthly_salary = 0
@@ -2223,7 +2216,7 @@ with tab_goals:
     with st.expander("📥 Import Goals from Excel", expanded=False):
         st.caption(
             "Upload an .xlsx file with columns: Goal Name, Cost Today, Inflation %, "
-            "Start Year, End Year, Frequency (yrs), Cumulative"
+            "Start Year, End Year, Frequency (yrs)"
         )
         goal_file = st.file_uploader("Upload Goals Excel", type=["xlsx","xls"], key=f"v{_v}_goal_upload")
         if goal_file:
@@ -2251,11 +2244,10 @@ with tab_goals:
         "Start Year":      int(g.get("start_year", THIS_YEAR + 5) or THIS_YEAR + 5),
         "End Year":        int(g.get("end_year", g.get("start_year", THIS_YEAR + 5)) or THIS_YEAR + 5),
         "Frequency (yrs)": int(g.get("frequency", 0) or 0),
-        "Cumulative":      bool(g.get("cumulative", False)),
     } for g in st.session_state.goals])
 
     if goals_df.empty:
-        goals_df = pd.DataFrame(columns=["Goal Name", "Cost Today", "Inflation %", "Start Year", "End Year", "Frequency (yrs)", "Cumulative"])
+        goals_df = pd.DataFrame(columns=["Goal Name", "Cost Today", "Inflation %", "Start Year", "End Year", "Frequency (yrs)"])
 
     edited_goals = st.data_editor(
         goals_df,
@@ -2269,7 +2261,6 @@ with tab_goals:
             "Start Year":      st.column_config.NumberColumn("Start Year", format="%d", min_value=2000, max_value=2100, step=1),
             "End Year":        st.column_config.NumberColumn("End Year", format="%d", min_value=2000, max_value=2100, step=1),
             "Frequency (yrs)": st.column_config.NumberColumn("Frequency (yrs)", format="%d", min_value=0, max_value=50, step=1, help="0=one-time, 1=annual, 2=every 2 years"),
-            "Cumulative":      st.column_config.CheckboxColumn("Cumulative", help="Sum all occurrences into one total"),
         }
     )
     st.caption("Edits above are staged in the table — nothing recalculates until you click Apply.")
@@ -2293,7 +2284,6 @@ with tab_goals:
                 "start_year":   sy,
                 "end_year":     ey,
                 "frequency":    int(safe_cell(r, "Frequency (yrs)", 0)),
-                "cumulative":   bool(safe_cell(r, "Cumulative", False)),
             })
         st.session_state.goals = new_goals_state
         st.toast(f"✓ Applied — {len(new_goals_state)} goal(s) updated")
@@ -2386,7 +2376,7 @@ with tab_assets:
             with col_chart:
                 st.plotly_chart(type_pie, width="stretch")
             with col_cagr:
-                tnw_now = total_net_worth()
+                ta_now = total_assets()
                 def calc_cls_cagr(target_cls):
                     subset = [a for a in st.session_state.assets if a["asset_class"] == target_cls] if target_cls else st.session_state.assets
                     sub_val = sum(a["value"] for a in subset)
@@ -2433,7 +2423,7 @@ with tab_assets:
                 """, unsafe_allow_html=True)
 
     st.markdown("### 📈 Asset Portfolio")
-    st.caption(f"Total: {fmt_full(total_net_worth())} · Weighted CAGR: {weighted_cagr():.1f}%")
+    st.caption(f"Total Assets: {fmt_full(total_assets())} · Weighted CAGR: {weighted_cagr():.1f}%")
 
     with st.expander("📥 Import Assets from Excel", expanded=False):
         st.caption(
@@ -2635,7 +2625,7 @@ with tab_assets:
                 "Class":         "",
                 "Purchase Date": "",
                 "Invested":      fmt_full(tot_inv) if tot_inv else "—",
-                "Current Value": fmt_full(total_net_worth()),
+                "Current Value": fmt_full(total_assets()),
                 "Maturity Amt":  fmt_full(tot_mat) if tot_mat else "—",
                 "Maturity Date": "",
                 "CAGR":          f"{weighted_cagr():.1f}%",
