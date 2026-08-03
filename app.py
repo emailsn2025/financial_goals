@@ -66,7 +66,6 @@ DEFAULT_CAGR_BY_CLASS = {
     "Other":            8.0,
 }
 LINE_COLORS   = ["#2563eb","#059669","#d97706","#7c3aed","#0d9488","#e11d48","#0891b2","#ca8a04","#6366f1","#14b8a6"]
-TAX_RATES     = {"Equity":0.125, "Precious Metals":0.125, "Debt":0.30, "Property":0.30, "Other":0.30}
 TODAY         = date.today()
 THIS_YEAR     = TODAY.year
 YEAR_OPTIONS  = list(range(2000, 2101))
@@ -155,7 +154,8 @@ def calc_asset_cagr(invested, maturity_amt, purchase_date_str, maturity_date_str
     except: return 0.0
 
 def asset_tax_rate(asset_class):
-    return TAX_RATES.get(asset_class, 0.30)
+    rates = st.session_state.get("custom_tax_rates", {"Equity":12.5, "Debt":30.0, "Property":30.0, "Precious Metals":12.5, "Other":30.0})
+    return rates.get(asset_class, 30.0) / 100.0
 
 def asset_net_maturity(invested, maturity_amt, asset_class):
     gain = max(maturity_amt - invested, 0)
@@ -235,6 +235,7 @@ for key, default in [
     ("ret_custom_tax", 0.0), ("ret_q_withdrawal", 0), ("ret_w_inflation", 6.0),
     ("proj_start_year", THIS_YEAR), ("proj_end_year", THIS_YEAR + 30),
     ("number_format", "Western"), ("apply_tax_drag", False),
+    ("custom_tax_rates", {"Equity": 12.5, "Debt": 30.0, "Property": 30.0, "Precious Metals": 12.5, "Other": 30.0})
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -1150,7 +1151,7 @@ def retirement_drawdown_chart(rows):
 def retirement_simulation(opening_corpus, annual_return_pct, asset_class,
                            quarterly_withdrawal, withdrawal_inflation_pct,
                            tax_rate_override=None):
-    tax_rate      = tax_rate_override if tax_rate_override is not None else TAX_RATES.get(asset_class, 0.30)
+    tax_rate      = tax_rate_override if tax_rate_override is not None else asset_tax_rate(asset_class)
     quarterly_ret = (1 + annual_return_pct / 100) ** 0.25 - 1
     corpus        = float(opening_corpus)
     total_invested= float(opening_corpus)
@@ -1669,11 +1670,9 @@ their realistic multi-year cost, not just the first payment.
 <br/><br/><b style="color:#93c5fd;">Step 3 — Assets</b><br/>
 Add investments and savings in the table: name, an optional free-text <b>Asset Type</b> (e.g. Mutual
 Fund, FD, Direct Equity) alongside the broader <b>Class</b> dropdown, current value, and expected
-CAGR. For fixed instruments enter the invested amount, maturity amount, and dates — CAGR and
-post-tax maturity value are calculated automatically. Tag an asset to one or more goals to earmark
+CAGR. For fixed instruments enter the invested amount, maturity amount, and dates. Set custom tax rates for each asset class and toggle <b>Apply Automatic Tax Drag</b> to dynamically convert your gross CAGRs into net, post-tax returns across the app. Tag an asset to one or more goals to earmark
 it; untagged assets form a shared pool that fills any remaining gaps. Set up a systematic withdrawal
-plan (SWP) on an asset if it's already being drawn down. Pie charts break your portfolio down by
-Class and by Type.
+plan (SWP) on an asset if it's already being drawn down.
 
 <br/><br/><b style="color:#93c5fd;">Step 4 — Liabilities</b><br/>
 Enter your outstanding loans, interest rates, and remaining tenure. The app calculates your exact monthly EMI to display an amortization schedule, and properly deducts the principal burndown from your projected Net Worth over time. <i style="color:#a5b4fc;">Note: Continue logging your actual EMI payments in the Expenses tab to keep your monthly cashflow accurate.</i>
@@ -1681,8 +1680,7 @@ Enter your outstanding loans, interest rates, and remaining tenure. The app calc
 <br/><br/><b style="color:#93c5fd;">Step 5 — Retirement</b><br/>
 Select your retirement goal — the corpus, return rate, and withdrawal amount are pre-filled from
 whatever assets you've tagged to it. The tab runs a real quarter-by-quarter drawdown simulation:
-each withdrawal is taxed only on its gain portion (12.5% for equity-type assets, 30% for
-debt-type, using long-term capital gains logic), while the remaining balance keeps compounding.
+each withdrawal is taxed only on its gain portion (using your custom tax rates), while the remaining balance keeps compounding.
 It shows exactly how many years the corpus lasts, with a chart and a full year-by-year breakdown.
 
 <br/><br/><b style="color:#93c5fd;">Dashboard</b><br/>
@@ -1693,9 +1691,9 @@ shortfall banner, and personalized recommendations.
 <br/><br/><b style="color:#93c5fd;">Tips</b><br/>
 • Tag assets to goals for more accurate, ring-fenced allocation<br/>
 • Use <b>💾 Save &amp; Load</b> below to download your data as a file and reload it next session —
-  this includes your Retirement tab settings too<br/>
+  this includes your custom tax rates and Retirement tab settings too<br/>
 • Use <b>📄 Export All Tabs to PDF</b> to generate a single shareable report with every chart and table<br/>
-• Import Income, Expenses, Goals, and Assets in bulk via Excel — look for the import panel in each tab<br/>
+• Import Income, Expenses, Goals, Assets, and Liabilities in bulk via Excel — look for the import panel in each tab<br/>
 • All figures use plain comma-grouped numbers with Million/Billion abbreviations for large amounts —
   enter and read values in whatever currency you're tracking
 </div>
@@ -1739,6 +1737,7 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
                 "ret_q_withdrawal":   st.session_state.get("ret_q_withdrawal", 0),
                 "ret_w_inflation":    st.session_state.get("ret_w_inflation", 6.0),
                 "apply_tax_drag":     st.session_state.get("apply_tax_drag", False),
+                "custom_tax_rates":   st.session_state.get("custom_tax_rates", {"Equity": 12.5, "Debt": 30.0, "Property": 30.0, "Precious Metals": 12.5, "Other": 30.0})
             }, indent=2),
             file_name="financial_planner_data.json", mime="application/json", use_container_width=True)
     with lc:
@@ -1753,7 +1752,7 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
                 d = st.session_state.pop("_pending_load")
                 for k in ["income","expenses","goals","assets","liabilities","projection_years",
                           "ret_opening_corpus","ret_goal_name","ret_annual_return",
-                          "ret_tax_class","ret_custom_tax","ret_q_withdrawal","ret_w_inflation", "apply_tax_drag"]:
+                          "ret_tax_class","ret_custom_tax","ret_q_withdrawal","ret_w_inflation", "apply_tax_drag", "custom_tax_rates"]:
                     if k in d:
                         if k == "liabilities" and isinstance(d[k], (int, float)):
                             st.session_state[k] = []
@@ -1776,6 +1775,7 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
             st.session_state.ret_q_withdrawal   = 0
             st.session_state.ret_w_inflation    = 6.0
             st.session_state.apply_tax_drag     = False
+            st.session_state.custom_tax_rates   = {"Equity": 12.5, "Debt": 30.0, "Property": 30.0, "Precious Metals": 12.5, "Other": 30.0}
             st.session_state.data_version += 1; st.rerun()
 
 with st.expander("📄 Export All Tabs to PDF", expanded=False):
@@ -2570,15 +2570,30 @@ with tab_assets:
     st.markdown("### 📈 Asset Portfolio")
     st.caption(f"Total Assets: {fmt_full(total_assets())} · Weighted CAGR: {weighted_cagr():.1f}%")
 
-    td_col1, td_col2 = st.columns([1, 3])
-    with td_col1:
-        apply_td = st.toggle("Apply Automatic Tax Drag", value=st.session_state.apply_tax_drag, key=f"v{_v}_tax_drag")
-        if apply_td != st.session_state.apply_tax_drag:
-            st.session_state.apply_tax_drag = apply_td
+    with st.expander("⚙️ Tax Configuration & Settings", expanded=False):
+        td_col1, td_col2 = st.columns([1, 2])
+        with td_col1:
+            apply_td = st.toggle("Apply Automatic Tax Drag", value=st.session_state.apply_tax_drag, key=f"v{_v}_tax_drag")
+            if apply_td != st.session_state.apply_tax_drag:
+                st.session_state.apply_tax_drag = apply_td
+                _asset_value_at_year_cached.clear()
+                st.rerun()
+        with td_col2:
+            st.caption("When enabled, the app automatically reduces your Expected CAGR for all projections to a net (post-tax) return based on the asset class's standard LTCG tax rate below.")
+
+        st.markdown("##### Custom Tax Rates by Class (%)")
+        tax_rates = st.session_state.get("custom_tax_rates", {"Equity": 12.5, "Debt": 30.0, "Property": 30.0, "Precious Metals": 12.5, "Other": 30.0})
+        tr_cols = st.columns(5)
+        
+        new_rates = {}
+        for i, cls in enumerate(ASSET_CLASSES):
+            with tr_cols[i]:
+                new_rates[cls] = st.number_input(cls, value=float(tax_rates.get(cls, 0.0)), min_value=0.0, max_value=99.0, step=0.5, key=f"v{_v}_tax_{cls}")
+                
+        if new_rates != tax_rates:
+            st.session_state.custom_tax_rates = new_rates
             _asset_value_at_year_cached.clear()
             st.rerun()
-    with td_col2:
-        st.caption("Reduces your expected CAGR for projections based on the asset class's standard LTCG tax rate (Equity/Metals: 12.5%, Debt/Property/Other: 30%).")
 
     with st.expander("📥 Import Assets from Excel", expanded=False):
         st.caption(
@@ -2648,7 +2663,7 @@ with tab_assets:
             "Current Value":   st.column_config.TextColumn("Current Value", help="e.g. 1,800,000"),
             "Maturity Amount": st.column_config.TextColumn("Maturity Amount", help="e.g. 1,800,000"),
             "Maturity Date":   st.column_config.TextColumn("Maturity Date", help="DD/MM/YYYY"),
-            "CAGR %":          st.column_config.NumberColumn("Gross CAGR %" if st.session_state.get("apply_tax_drag") else "CAGR %", format="%.2f", min_value=0.0, max_value=50.0, step=0.5, help="Auto-calculated if maturity info provided"),
+            "CAGR %":          st.column_config.NumberColumn("Expected Gross CAGR %", format="%.2f", min_value=0.0, max_value=50.0, step=0.5, help="Auto-calculated if maturity info provided"),
             "Tag Goals":       st.column_config.TextColumn("Tag Goals", help="Comma-separated goal names"),
             "SWP Monthly":     st.column_config.TextColumn("SWP Monthly", help="e.g. 1,800,000"),
             "SWP Start Yr":    st.column_config.NumberColumn("SWP Start Yr", format="%d", min_value=2000, max_value=2100, help="Calendar year, e.g. 2030"),
@@ -2962,10 +2977,10 @@ with tab_retire:
             index=ASSET_CLASSES.index(default_cls) if default_cls in ASSET_CLASSES else 1,
             key=f"v{_v}_ret_cls")
 
-        tax_rate_display = TAX_RATES.get(asset_class_for_tax, 0.30)
-        st.caption(f"LTCG tax rate: **{tax_rate_display*100:.1f}%** — on gain portion only")
+        tax_rate_display = asset_tax_rate(asset_class_for_tax)
+        st.caption(f"LTCG tax rate: **{tax_rate_display*100:.1f}%** (based on settings) — on gain portion only")
 
-        custom_tax = st.number_input("Override Tax Rate % (0 = use default)",
+        custom_tax = st.number_input("Override Tax Rate % (0 = use settings)",
             value=float(st.session_state.get("ret_custom_tax", 0.0) or 0.0),
             min_value=0.0, max_value=50.0, step=0.5, key=f"v{_v}_ret_tax")
         effective_tax = (custom_tax/100) if custom_tax > 0 else None
@@ -3011,7 +3026,7 @@ with tab_retire:
 > + Return on Remainder
 > = Closing Corpus
 
-**Tax rates:** Equity / Precious Metals: 12.5% · Debt / Property / Other: 30%
+**Tax rates:** Configured via your custom settings in the Assets tab.
 
 Withdrawal inflates every year at your chosen rate.
         """)
