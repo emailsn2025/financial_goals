@@ -50,10 +50,12 @@ st.markdown("""
     div[data-testid="stMetric"] { border: 1px solid rgba(128,128,128,0.2); border-radius: 10px; padding: 12px 16px; }
     div[data-testid="stMetric"] label { font-size: 13px !important; }
     
-    /* Make tab headers bigger and bolder */
-    .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
-        font-size: 18px !important;
-        font-weight: 600 !important;
+    /* Enlarge Tab Headers */
+    button[data-baseweb="tab"] p, 
+    button[data-baseweb="tab"] span, 
+    button[data-baseweb="tab"] div[data-testid="stMarkdownContainer"] p {
+        font-size: 22px !important;
+        font-weight: 700 !important;
     }
     
     .badge-green  { background:#059669; color:#fff; padding:2px 10px; border-radius:12px; font-size:13px; font-weight:600; display:inline-block; }
@@ -167,6 +169,15 @@ def calc_asset_cagr(invested, maturity_amt, purchase_date_str, maturity_date_str
         yrs  = years_between(pd_, md_)
         if yrs <= 0 or invested <= 0 or maturity_amt <= 0: return 0.0
         return ((maturity_amt / invested) ** (1 / yrs) - 1) * 100
+    except: return 0.0
+
+def calc_asset_maturity(invested, cagr, purchase_date_str, maturity_date_str):
+    try:
+        pd_  = parse_date(purchase_date_str)
+        md_  = parse_date(maturity_date_str)
+        yrs  = years_between(pd_, md_)
+        if yrs <= 0 or invested <= 0 or cagr <= 0: return 0.0
+        return invested * ((1 + cagr / 100.0) ** yrs)
     except: return 0.0
 
 def asset_tax_rate(asset_class):
@@ -915,17 +926,25 @@ def import_assets_from_excel(uploaded_file):
                     else:
                         a[field] = str(val).strip()
 
-            if a["maturity_amt"] > 0 and not cagr_provided and a["invested"] > 0:
-                auto = round(calc_asset_cagr(
-                    a["invested"], a["maturity_amt"],
-                    a["purchase_date"], a["maturity_date"]), 2)
+            inv = a["invested"]
+            mat = a["maturity_amt"]
+            pdate = a["purchase_date"]
+            mdate = a["maturity_date"]
+            cls = a["asset_class"]
+
+            if mat > 0 and inv > 0 and mdate and not cagr_provided:
+                auto = round(calc_asset_cagr(inv, mat, pdate or str(TODAY), mdate), 2)
                 if auto > 0:
                     a["cagr"] = auto
                     cagr_provided = True
 
             if not cagr_provided:
-                a["cagr"] = DEFAULT_CAGR_BY_CLASS.get(a["asset_class"], 8.0)
-                defaulted_cagr_list.append((a["name"] or "(unnamed)", a["asset_class"], a["cagr"]))
+                a["cagr"] = DEFAULT_CAGR_BY_CLASS.get(cls, 8.0)
+                defaulted_cagr_list.append((a["name"] or "(unnamed)", cls, a["cagr"]))
+
+            if a["maturity_amt"] <= 0 and a["cagr"] > 0 and mdate:
+                principal = inv if inv > 0 else a["value"]
+                a["maturity_amt"] = int(round(calc_asset_maturity(principal, a["cagr"], pdate or str(TODAY), mdate)))
 
             new_assets.append(a)
         return new_assets, defaulted_cagr_list, None
@@ -1858,7 +1877,7 @@ tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_liab, tab_retire = st.tabs([
 # DASHBOARD
 # ══════════════════════════════════════════════════════
 with tab_dash:
-    st.markdown("# Dashboard")
+    st.markdown("# 1. Dashboard")
     eval_yr = get_dashboard_eval_year()
     alloc_list = smart_allocation()
     
@@ -2186,7 +2205,7 @@ with tab_dash:
 # INCOME & EXPENSES
 # ══════════════════════════════════════════════════════
 with tab_inc_exp:
-    st.markdown("# Income & Expenses")
+    st.markdown("# 2. Income & Expenses")
     if st.session_state.expenses or st.session_state.income:
         st.plotly_chart(expense_income_chart(), width="stretch")
 
@@ -2401,7 +2420,7 @@ with tab_inc_exp:
 # GOALS
 # ══════════════════════════════════════════════════════
 with tab_goals:
-    st.markdown("# Goals")
+    st.markdown("# 3. Goals")
     st.markdown("### 🎯 Financial Goals")
 
     with st.expander("📥 Import Goals from Excel", expanded=False):
@@ -2557,7 +2576,7 @@ with tab_goals:
 # ASSETS
 # ══════════════════════════════════════════════════════
 with tab_assets:
-    st.markdown("# Assets")
+    st.markdown("# 4. Assets")
     if st.session_state.assets and len(st.session_state.assets) <= 15:
         st.plotly_chart(asset_chart(), width="stretch")
 
@@ -2620,15 +2639,30 @@ with tab_assets:
     with st.expander("⚙️ Tax Configuration & Settings", expanded=False):
         td_col1, td_col2 = st.columns([1, 2])
         with td_col1:
-            st.toggle("Apply Automatic Tax Drag", key="apply_tax_drag", on_change=clear_asset_cache)
+            apply_td = st.toggle("Apply Automatic Tax Drag", value=st.session_state.apply_tax_drag, key=f"v{_v}_tax_drag_toggle")
+            if apply_td != st.session_state.apply_tax_drag:
+                st.session_state.apply_tax_drag = apply_td
+                clear_asset_cache()
+                st.rerun()
         with td_col2:
-            st.caption("When enabled, the app automatically applies taxes to your Expected CAGRs, Maturity Amounts, and Retirement Drawdowns based on the asset class's standard LTCG tax rate below.")
+            st.caption("When enabled, the app automatically applies taxes to your Expected CAGRs, Maturity Amounts, and Retirement Drawdowns based on the asset class's standard LTCG tax rate below. If turned off, all tax impact is exactly 0.")
 
         st.markdown("##### Custom Tax Rates by Class (%)")
         tr_cols = st.columns(5)
+        
+        new_rates = {}
         for i, cls in enumerate(ASSET_CLASSES):
             with tr_cols[i]:
-                st.number_input(cls, min_value=0.0, max_value=99.0, step=0.5, key=f"tax_rate_{cls}", on_change=clear_asset_cache)
+                current_val = float(st.session_state.get(f"tax_rate_{cls}", DEFAULT_TAX_RATES.get(cls, 0.0)))
+                new_val = st.number_input(cls, value=current_val, min_value=0.0, max_value=99.0, step=0.5, key=f"v{_v}_tax_input_{cls}")
+                new_rates[cls] = new_val
+                
+        # Only rerun if a rate actually changed
+        if any(st.session_state.get(f"tax_rate_{cls}") != new_rates[cls] for cls in ASSET_CLASSES):
+            for cls in ASSET_CLASSES:
+                st.session_state[f"tax_rate_{cls}"] = new_rates[cls]
+            clear_asset_cache()
+            st.rerun()
 
     with st.expander("📥 Import Assets from Excel", expanded=False):
         st.caption(
@@ -2733,23 +2767,24 @@ with tab_assets:
             if pd.isna(cls) or cls not in ASSET_CLASSES: cls = "Equity"
 
             raw_cagr = r.get("CAGR %", None)
-            cagr_is_blank = pd.isna(raw_cagr)
+            cagr_is_blank = pd.isna(raw_cagr) or str(raw_cagr).strip() == ""
             manual_cagr = 0.0 if cagr_is_blank else float(raw_cagr)
 
-            if mat > 0 and inv > 0 and mdate:
+            if mat > 0 and inv > 0 and mdate and cagr_is_blank:
                 auto = round(calc_asset_cagr(inv, mat, pdate or str(TODAY), mdate), 2)
                 if auto > 0:
                     cagr = auto
-                elif not cagr_is_blank:
-                    cagr = manual_cagr
                 else:
-                    cagr = DEFAULT_CAGR_BY_CLASS.get(cls, 8.0)
-                    defaulted_cagr_assets.append((name or "(unnamed)", cls, cagr))
+                    cagr = manual_cagr
             elif cagr_is_blank:
                 cagr = DEFAULT_CAGR_BY_CLASS.get(cls, 8.0)
                 defaulted_cagr_assets.append((name or "(unnamed)", cls, cagr))
             else:
                 cagr = manual_cagr
+
+            if mat <= 0 and cagr > 0 and mdate:
+                principal = inv if inv > 0 else val
+                mat = int(round(calc_asset_maturity(principal, cagr, pdate or str(TODAY), mdate)))
 
             raw_tags = r.get("Tag Goals", "")
             tags_raw = "" if pd.isna(raw_tags) else str(raw_tags).strip()
@@ -2817,8 +2852,8 @@ with tab_assets:
                     "Maturity Amt":  fmt_full(mat) if mat else "—",
                     "Maturity Date": a.get("maturity_date","") or "—",
                     "CAGR":          f'{get_asset_eff_cagr(a):.2f}%' + (" (Net)" if st.session_state.get("apply_tax_drag") else ""),
-                    "Tax on Gains":  fmt_full(tax_m) if (tax_m and st.session_state.get("apply_tax_drag")) else "—",
-                    "Net Maturity":  fmt_full(net_m) if (net_m and st.session_state.get("apply_tax_drag")) else (fmt_full(mat) if mat else "—"),
+                    "Tax on Gains":  fmt_full(tax_m) if (tax_m > 0 and st.session_state.get("apply_tax_drag")) else "—",
+                    "Net Maturity":  fmt_full(net_m) if (net_m > 0 and st.session_state.get("apply_tax_drag")) else (fmt_full(mat) if mat else "—"),
                     "Tagged Goals":  tags,
                     "SWP":           swp,
                     "5 Yrs":         fmt_full(asset_value_at_year(a, 5, ai)),
@@ -2835,8 +2870,8 @@ with tab_assets:
                 "Maturity Amt":  fmt_full(tot_mat) if tot_mat else "—",
                 "Maturity Date": "",
                 "CAGR":          f"{weighted_cagr():.1f}%",
-                "Tax on Gains":  fmt_full(tot_tax) if (tot_tax and st.session_state.get("apply_tax_drag")) else "—",
-                "Net Maturity":  fmt_full(tot_net) if (tot_net and st.session_state.get("apply_tax_drag")) else (fmt_full(tot_mat) if tot_mat else "—"),
+                "Tax on Gains":  fmt_full(tot_tax) if (tot_tax > 0 and st.session_state.get("apply_tax_drag")) else "—",
+                "Net Maturity":  fmt_full(tot_net) if (tot_net > 0 and st.session_state.get("apply_tax_drag")) else (fmt_full(tot_mat) if tot_mat else "—"),
                 "Tagged Goals":  "",
                 "SWP":           "",
                 "5 Yrs":         fmt_full(portfolio_at_year(5)),
