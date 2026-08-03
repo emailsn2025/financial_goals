@@ -898,6 +898,41 @@ def import_assets_from_excel(uploaded_file):
     except Exception as e:
         return [], [], str(e)
 
+def import_liabilities_from_excel(uploaded_file):
+    try:
+        df = pd.read_excel(uploaded_file)
+        df.columns = [c.strip().lower() for c in df.columns]
+        col_map = {
+            "name":       ["loan name", "name", "loan", "description"],
+            "principal":  ["outstanding principal", "principal", "balance", "amount", "loan amount"],
+            "rate":       ["interest rate %", "interest rate", "rate %", "rate", "roi"],
+            "months":     ["remaining months", "months", "tenure", "duration", "term"],
+        }
+        def find_col(df, options):
+            for o in options:
+                if o in df.columns: return o
+            return None
+
+        new_liab = []
+        for _, row in df.iterrows():
+            l = {"name": "", "principal": 0, "rate": 8.0, "months": 12}
+            for field, options in col_map.items():
+                c = find_col(df, options)
+                if c and pd.notna(row[c]):
+                    val = row[c]
+                    if field == "principal":
+                        l[field] = parse_amount(str(val))
+                    elif field == "rate":
+                        l[field] = float(str(val).replace("%", "").strip() or 8.0)
+                    elif field == "months":
+                        l[field] = int(float(str(val).strip() or 12))
+                    else:
+                        l[field] = str(val).strip()
+            new_liab.append(l)
+        return new_liab, None
+    except Exception as e:
+        return [], str(e)
+
 # ══════════════════════════════════════════════════════
 # CHARTS
 # ══════════════════════════════════════════════════════
@@ -2746,6 +2781,25 @@ with tab_liab:
     st.markdown("### 💳 Liabilities & Loans")
     st.caption("Track your outstanding debt. This automatically reduces your projected Net Worth over time.")
     st.info("💡 **Cashflow Note:** Since you already log your loan EMIs in the **Expenses** tab, this section purely tracks your principal burndown to calculate an accurate Net Worth projection. It does not alter your monthly surplus.")
+
+    with st.expander("📥 Import Liabilities from Excel", expanded=False):
+        st.caption("Columns: Loan Name | Outstanding Principal | Interest Rate % | Remaining Months")
+        liab_file = st.file_uploader("Upload Liabilities Excel", type=["xlsx","xls"], key=f"v{_v}_liab_upload")
+        if liab_file:
+            new_liab, err = import_liabilities_from_excel(liab_file)
+            if err:
+                st.error(f"Error: {err}")
+            else:
+                st.success(f"✓ Found {len(new_liab)} liabilities.")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("Replace all liabilities", key=f"v{_v}_liab_replace"):
+                        st.session_state.liabilities = new_liab
+                        st.rerun()
+                with c2:
+                    if st.button("Append to existing", key=f"v{_v}_liab_append"):
+                        st.session_state.liabilities.extend(new_liab)
+                        st.rerun()
 
     liab_df = pd.DataFrame([{
         "Loan Name":             l.get("name", ""),
