@@ -49,6 +49,13 @@ st.markdown("""
     .block-container { padding-top: 2rem; }
     div[data-testid="stMetric"] { border: 1px solid rgba(128,128,128,0.2); border-radius: 10px; padding: 12px 16px; }
     div[data-testid="stMetric"] label { font-size: 13px !important; }
+    
+    /* Make tab headers bigger and bolder */
+    .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
+        font-size: 18px !important;
+        font-weight: 600 !important;
+    }
+    
     .badge-green  { background:#059669; color:#fff; padding:2px 10px; border-radius:12px; font-size:13px; font-weight:600; display:inline-block; }
     .badge-amber  { background:#d97706; color:#fff; padding:2px 10px; border-radius:12px; font-size:13px; font-weight:600; display:inline-block; }
     .badge-red    { background:#dc2626; color:#fff; padding:2px 10px; border-radius:12px; font-size:13px; font-weight:600; display:inline-block; }
@@ -58,6 +65,14 @@ st.markdown("""
 
 ASSET_CLASSES = ["Debt", "Equity", "Property", "Precious Metals", "Other"]
 
+DEFAULT_TAX_RATES = {
+    "Equity": 12.5,
+    "Debt": 30.0,
+    "Property": 30.0,
+    "Precious Metals": 12.5,
+    "Other": 30.0
+}
+
 DEFAULT_CAGR_BY_CLASS = {
     "Equity":          10.0,
     "Debt":             6.0,
@@ -65,6 +80,7 @@ DEFAULT_CAGR_BY_CLASS = {
     "Precious Metals": 10.0,
     "Other":            8.0,
 }
+
 LINE_COLORS   = ["#2563eb","#059669","#d97706","#7c3aed","#0d9488","#e11d48","#0891b2","#ca8a04","#6366f1","#14b8a6"]
 TODAY         = date.today()
 THIS_YEAR     = TODAY.year
@@ -154,13 +170,19 @@ def calc_asset_cagr(invested, maturity_amt, purchase_date_str, maturity_date_str
     except: return 0.0
 
 def asset_tax_rate(asset_class):
-    rates = st.session_state.get("custom_tax_rates", {"Equity":12.5, "Debt":30.0, "Property":30.0, "Precious Metals":12.5, "Other":30.0})
-    return rates.get(asset_class, 30.0) / 100.0
+    rate = st.session_state.get(f"tax_rate_{asset_class}", DEFAULT_TAX_RATES.get(asset_class, 30.0))
+    return float(rate) / 100.0
 
 def asset_net_maturity(invested, maturity_amt, asset_class):
     gain = max(maturity_amt - invested, 0)
     tax  = gain * asset_tax_rate(asset_class)
     return maturity_amt - tax, tax
+
+def get_asset_eff_cagr(a):
+    c = float(a.get("cagr", 0) or 0)
+    if st.session_state.get("apply_tax_drag", False):
+        c = c * (1.0 - asset_tax_rate(a.get("asset_class", "Equity")))
+    return c
 
 # ══════════════════════════════════════════════════════
 # CACHED PURE COMPUTATION (no session state)
@@ -186,6 +208,11 @@ def _asset_value_at_year_cached(value, cagr, swp_monthly, swp_start_year, target
 def _compound_cached(principal, rate_pct, years):
     return principal * (1 + rate_pct / 100) ** years
 
+def clear_asset_cache():
+    _asset_value_at_year_cached.clear()
+    _goal_occurrences_cached.clear()
+    _compound_cached.clear()
+
 # ══════════════════════════════════════════════════════
 # ASSET VALUE WITH SWP
 # ══════════════════════════════════════════════════════
@@ -203,12 +230,6 @@ def asset_swp_start_display(a):
     if raw > 1000: return raw
     if raw > 0: return rel_to_cal(raw)
     return THIS_YEAR
-
-def get_asset_eff_cagr(a):
-    c = float(a.get("cagr", 0) or 0)
-    if st.session_state.get("apply_tax_drag", False):
-        c = c * (1.0 - asset_tax_rate(a.get("asset_class", "Equity")))
-    return c
 
 def asset_value_at_year(a, target_year, avg_inf=6.0):
     return _asset_value_at_year_cached(
@@ -235,10 +256,14 @@ for key, default in [
     ("ret_custom_tax", 0.0), ("ret_q_withdrawal", 0), ("ret_w_inflation", 6.0),
     ("proj_start_year", THIS_YEAR), ("proj_end_year", THIS_YEAR + 30),
     ("number_format", "Western"), ("apply_tax_drag", False),
-    ("custom_tax_rates", {"Equity": 12.5, "Debt": 30.0, "Property": 30.0, "Precious Metals": 12.5, "Other": 30.0})
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
+
+for cls in ASSET_CLASSES:
+    if f"tax_rate_{cls}" not in st.session_state:
+        old_rates = st.session_state.get("custom_tax_rates", {})
+        st.session_state[f"tax_rate_{cls}"] = old_rates.get(cls, DEFAULT_TAX_RATES.get(cls, 0.0))
 
 _v = st.session_state.data_version
 
@@ -1723,23 +1748,22 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
     st.markdown('<div style="color: #ef4444; font-weight: bold; margin-bottom: 10px;">⚠️ Reminder: Please download your data before you end the session, as it will not be saved!</div>', unsafe_allow_html=True)
     sc, lc, rc = st.columns(3)
     with sc:
-        st.download_button("⬇️ Download My Data",
-            data=json.dumps({
-                "income":st.session_state.income, "expenses":st.session_state.expenses,
-                "projection_years":st.session_state.projection_years,
-                "goals":st.session_state.goals, "assets":st.session_state.assets,
-                "liabilities": st.session_state.liabilities,
-                "ret_opening_corpus": st.session_state.get("ret_opening_corpus", 0),
-                "ret_goal_name":      st.session_state.get("ret_goal_name", ""),
-                "ret_annual_return":  st.session_state.get("ret_annual_return", 8.0),
-                "ret_tax_class":      st.session_state.get("ret_tax_class", "Equity"),
-                "ret_custom_tax":     st.session_state.get("ret_custom_tax", 0.0),
-                "ret_q_withdrawal":   st.session_state.get("ret_q_withdrawal", 0),
-                "ret_w_inflation":    st.session_state.get("ret_w_inflation", 6.0),
-                "apply_tax_drag":     st.session_state.get("apply_tax_drag", False),
-                "custom_tax_rates":   st.session_state.get("custom_tax_rates", {"Equity": 12.5, "Debt": 30.0, "Property": 30.0, "Precious Metals": 12.5, "Other": 30.0})
-            }, indent=2),
-            file_name="financial_planner_data.json", mime="application/json", use_container_width=True)
+        export_data = {
+            "income":st.session_state.income, "expenses":st.session_state.expenses,
+            "projection_years":st.session_state.projection_years,
+            "goals":st.session_state.goals, "assets":st.session_state.assets,
+            "liabilities": st.session_state.liabilities,
+            "ret_opening_corpus": st.session_state.get("ret_opening_corpus", 0),
+            "ret_goal_name":      st.session_state.get("ret_goal_name", ""),
+            "ret_annual_return":  st.session_state.get("ret_annual_return", 8.0),
+            "ret_tax_class":      st.session_state.get("ret_tax_class", "Equity"),
+            "ret_custom_tax":     st.session_state.get("ret_custom_tax", 0.0),
+            "ret_q_withdrawal":   st.session_state.get("ret_q_withdrawal", 0),
+            "ret_w_inflation":    st.session_state.get("ret_w_inflation", 6.0),
+            "apply_tax_drag":     st.session_state.get("apply_tax_drag", False),
+            "tax_rates":          {cls: st.session_state.get(f"tax_rate_{cls}", DEFAULT_TAX_RATES[cls]) for cls in ASSET_CLASSES}
+        }
+        st.download_button("⬇️ Download My Data", data=json.dumps(export_data, indent=2), file_name="financial_planner_data.json", mime="application/json", use_container_width=True)
     with lc:
         up = st.file_uploader("Load", type=["json"], label_visibility="collapsed")
         if up:
@@ -1752,15 +1776,16 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
                 d = st.session_state.pop("_pending_load")
                 for k in ["income","expenses","goals","assets","liabilities","projection_years",
                           "ret_opening_corpus","ret_goal_name","ret_annual_return",
-                          "ret_tax_class","ret_custom_tax","ret_q_withdrawal","ret_w_inflation", "apply_tax_drag", "custom_tax_rates"]:
+                          "ret_tax_class","ret_custom_tax","ret_q_withdrawal","ret_w_inflation", "apply_tax_drag"]:
                     if k in d:
                         if k == "liabilities" and isinstance(d[k], (int, float)):
                             st.session_state[k] = []
                         else:
                             st.session_state[k] = d[k]
-                _asset_value_at_year_cached.clear()
-                _compound_cached.clear()
-                _goal_occurrences_cached.clear()
+                if "tax_rates" in d:
+                    for cls, rate in d["tax_rates"].items():
+                        st.session_state[f"tax_rate_{cls}"] = rate
+                clear_asset_cache()
                 st.session_state.data_version += 1
                 st.rerun()
     with rc:
@@ -1775,8 +1800,11 @@ with st.expander("💾 Save & Load Your Data", expanded=False):
             st.session_state.ret_q_withdrawal   = 0
             st.session_state.ret_w_inflation    = 6.0
             st.session_state.apply_tax_drag     = False
-            st.session_state.custom_tax_rates   = {"Equity": 12.5, "Debt": 30.0, "Property": 30.0, "Precious Metals": 12.5, "Other": 30.0}
-            st.session_state.data_version += 1; st.rerun()
+            for cls in ASSET_CLASSES:
+                st.session_state[f"tax_rate_{cls}"] = DEFAULT_TAX_RATES[cls]
+            clear_asset_cache()
+            st.session_state.data_version += 1
+            st.rerun()
 
 with st.expander("📄 Export All Tabs to PDF", expanded=False):
     st.caption("Generates a single PDF covering Dashboard, Income & Expenses, Goals, Assets, Liabilities, and Retirement.")
@@ -1808,13 +1836,20 @@ with st.expander("📄 Export All Tabs to PDF", expanded=False):
             use_container_width=True,
         )
 
-tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_liab, tab_retire = st.tabs(
-    ["Dashboard","Income & Expenses","Goals","Assets","💳 Liabilities","🏖️ Retirement"])
+tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_liab, tab_retire = st.tabs([
+    "1. Dashboard", 
+    "2. Income & Expenses", 
+    "3. Goals", 
+    "4. Assets", 
+    "5. 💳 Liabilities", 
+    "6. 🏖️ Retirement"
+])
 
 # ══════════════════════════════════════════════════════
 # DASHBOARD
 # ══════════════════════════════════════════════════════
 with tab_dash:
+    st.markdown("# 1. Dashboard")
     eval_yr = get_dashboard_eval_year()
     alloc_list = smart_allocation()
     
@@ -2142,6 +2177,7 @@ with tab_dash:
 # INCOME & EXPENSES
 # ══════════════════════════════════════════════════════
 with tab_inc_exp:
+    st.markdown("# 2. Income & Expenses")
     if st.session_state.expenses or st.session_state.income:
         st.plotly_chart(expense_income_chart(), width="stretch")
 
@@ -2356,6 +2392,7 @@ with tab_inc_exp:
 # GOALS
 # ══════════════════════════════════════════════════════
 with tab_goals:
+    st.markdown("# 3. Goals")
     st.markdown("### 🎯 Financial Goals")
 
     with st.expander("📥 Import Goals from Excel", expanded=False):
@@ -2511,6 +2548,7 @@ with tab_goals:
 # ASSETS
 # ══════════════════════════════════════════════════════
 with tab_assets:
+    st.markdown("# 4. Assets")
     if st.session_state.assets and len(st.session_state.assets) <= 15:
         st.plotly_chart(asset_chart(), width="stretch")
 
@@ -2573,27 +2611,15 @@ with tab_assets:
     with st.expander("⚙️ Tax Configuration & Settings", expanded=False):
         td_col1, td_col2 = st.columns([1, 2])
         with td_col1:
-            apply_td = st.toggle("Apply Automatic Tax Drag", value=st.session_state.apply_tax_drag, key=f"v{_v}_tax_drag")
-            if apply_td != st.session_state.apply_tax_drag:
-                st.session_state.apply_tax_drag = apply_td
-                _asset_value_at_year_cached.clear()
-                st.rerun()
+            st.toggle("Apply Automatic Tax Drag", key="apply_tax_drag", on_change=clear_asset_cache)
         with td_col2:
             st.caption("When enabled, the app automatically reduces your Expected CAGR for all projections to a net (post-tax) return based on the asset class's standard LTCG tax rate below.")
 
         st.markdown("##### Custom Tax Rates by Class (%)")
-        tax_rates = st.session_state.get("custom_tax_rates", {"Equity": 12.5, "Debt": 30.0, "Property": 30.0, "Precious Metals": 12.5, "Other": 30.0})
         tr_cols = st.columns(5)
-        
-        new_rates = {}
         for i, cls in enumerate(ASSET_CLASSES):
             with tr_cols[i]:
-                new_rates[cls] = st.number_input(cls, value=float(tax_rates.get(cls, 0.0)), min_value=0.0, max_value=99.0, step=0.5, key=f"v{_v}_tax_{cls}")
-                
-        if new_rates != tax_rates:
-            st.session_state.custom_tax_rates = new_rates
-            _asset_value_at_year_cached.clear()
-            st.rerun()
+                st.number_input(cls, min_value=0.0, max_value=99.0, step=0.5, key=f"tax_rate_{cls}", on_change=clear_asset_cache)
 
     with st.expander("📥 Import Assets from Excel", expanded=False):
         st.caption(
@@ -2742,6 +2768,7 @@ with tab_assets:
         st.session_state.assets = new_assets_state
         st.session_state["_cagr_defaults_applied"] = defaulted_cagr_assets
         st.toast(f"✓ Applied — {len(new_assets_state)} asset(s) updated")
+        clear_asset_cache()
         st.rerun()
 
     if st.session_state.get("_cagr_defaults_applied"):
@@ -2813,6 +2840,7 @@ with tab_assets:
 # LIABILITIES TAB
 # ══════════════════════════════════════════════════════
 with tab_liab:
+    st.markdown("# 5. 💳 Liabilities")
     st.markdown("### 💳 Liabilities & Loans")
     st.caption("Track your outstanding debt. This automatically reduces your projected Net Worth over time.")
     st.info("💡 **Cashflow Note:** Since you already log your loan EMIs in the **Expenses** tab, this section purely tracks your principal burndown to calculate an accurate Net Worth projection. It does not alter your monthly surplus.")
@@ -2907,6 +2935,7 @@ with tab_liab:
 # RETIREMENT TAB
 # ══════════════════════════════════════════════════════
 with tab_retire:
+    st.markdown("# 6. 🏖️ Retirement")
     st.markdown("### 🏖️ Retirement Corpus Drawdown Planner")
     st.caption("Model how long your retirement corpus lasts under quarterly SWP with tax-adjusted returns.")
 
