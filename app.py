@@ -1270,7 +1270,7 @@ def retirement_drawdown_chart(rows):
 @st.cache_data(max_entries=64)
 def retirement_simulation(opening_corpus, annual_return_pct, asset_class,
                            quarterly_withdrawal, withdrawal_inflation_pct,
-                           tax_rate_override=None):
+                           tax_rate_override=None, start_cal_year=THIS_YEAR):
     tax_rate      = tax_rate_override if tax_rate_override is not None else asset_tax_rate(asset_class)
     quarterly_ret = (1 + annual_return_pct / 100) ** 0.25 - 1
     corpus        = float(opening_corpus)
@@ -1280,9 +1280,10 @@ def retirement_simulation(opening_corpus, annual_return_pct, asset_class,
 
     while corpus > 0:
         quarter += 1
-        year    = (quarter-1)//4+1
-        q_label = f"Y{year} Q{(quarter-1)%4+1}"
-        inflation_factor = (1 + withdrawal_inflation_pct/100) ** ((quarter-1)//4)
+        year_offset = (quarter-1)//4
+        cal_year = start_cal_year + year_offset
+        q_label = f"{cal_year} Q{(quarter-1)%4+1}"
+        inflation_factor = (1 + withdrawal_inflation_pct/100) ** year_offset
         withdrawal = min(quarterly_withdrawal * inflation_factor, corpus)
 
         total_value    = corpus
@@ -1706,8 +1707,13 @@ def generate_full_pdf_report():
         ret_winf      = st.session_state.get("ret_w_inflation", 7.0)
         eff_tax = (ret_custom_tax/100) if ret_custom_tax > 0 else None
 
+        all_goals = st.session_state.get("goals", [])
+        selected_goal = next((g for g in all_goals if (g.get("name") or "") == ret_goal), None)
+        goal_year_rel = cal_to_rel(selected_goal.get("start_year", THIS_YEAR)) if selected_goal else 0
+        start_cal_year = rel_to_cal(goal_year_rel)
+
         rows_sim, total_withdrawn = retirement_simulation(
-            ret_corpus, ret_return, ret_tax_class, ret_qw, ret_winf, eff_tax)
+            ret_corpus, ret_return, ret_tax_class, ret_qw, ret_winf, eff_tax, start_cal_year)
         total_quarters = len(rows_sim)
         total_years    = total_quarters / 4
         total_tax_paid = sum(r["Tax Amount"] for r in rows_sim)
@@ -1736,7 +1742,7 @@ def generate_full_pdf_report():
         for r in rows_sim:
             yr = r["Quarter"].split(" ")[0]
             if yr not in annual:
-                annual[yr] = {"Year": yr.replace("Y","Year "), "Opening": r["Opening Corpus"],
+                annual[yr] = {"Year": yr, "Opening": r["Opening Corpus"],
                               "Withdrawal": 0, "Tax": 0, "Return": 0, "Closing": 0}
             annual[yr]["Withdrawal"] += r["Withdrawal"]
             annual[yr]["Tax"]        += r["Tax Amount"]
@@ -2020,7 +2026,6 @@ tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_liab, tab_retire = st.tabs([
 
 # ══════════════════════════════════════════════════════
 # DASHBOARD
-# ══════════════════════════════════════════════════════
 # ══════════════════════════════════════════════════════
 with tab_dash:
     st.markdown("# 1. Dashboard")
@@ -3250,6 +3255,7 @@ with tab_retire:
         selected_goal  = next((g for g in all_goals if (g["name"] or f"Goal {all_goals.index(g)+1}") == selected_goal_name), None)
         
         goal_year_rel  = cal_to_rel(selected_goal.get("start_year", THIS_YEAR)) if selected_goal else 0
+        start_cal_year = rel_to_cal(goal_year_rel)
         ai             = avg_inflation()
 
         allocs = smart_allocation()
@@ -3353,7 +3359,7 @@ Withdrawal inflates every year at your chosen rate.
     else:
         rows, total_withdrawn = retirement_simulation(
             opening_corpus, annual_return, asset_class_for_tax,
-            q_withdrawal, withdrawal_inflation, effective_tax)
+            q_withdrawal, withdrawal_inflation, effective_tax, start_cal_year)
 
         total_quarters = len(rows)
         total_years    = total_quarters / 4
@@ -3413,7 +3419,7 @@ Withdrawal inflates every year at your chosen rate.
             for r in rows:
                 yr = r["Quarter"].split(" ")[0]
                 if yr not in annual:
-                    annual[yr] = {"Year":yr.replace("Y","Year "),"Opening Corpus":r["Opening Corpus"],
+                    annual[yr] = {"Year": yr, "Opening Corpus":r["Opening Corpus"],
                         "Total Withdrawal":0,"Total Gross Return":0,"Total Gain Portion":0,
                         "Total Tax":0,"Total Net Return":0,"Net Gain":0,"Closing Corpus":0}
                 annual[yr]["Total Withdrawal"]  += r["Withdrawal"]
