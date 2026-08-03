@@ -1808,13 +1808,25 @@ tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_liab, tab_retire = st.tabs(
 # ══════════════════════════════════════════════════════
 with tab_dash:
     eval_yr = get_dashboard_eval_year()
+    alloc_list = smart_allocation()
     
-    r1c1, r1c2, r1c3 = st.columns(3)
+    total_goals = len(alloc_list)
+    fully_funded = sum(1 for g in alloc_list if g["pct"] >= 100)
+    goals_met_str = f"{fully_funded} / {total_goals}" if total_goals > 0 else "0 / 0"
+    
+    ret_goal_name = st.session_state.get("ret_goal_name", "")
+    retire_goal = next((g for g in alloc_list if g["name"] == ret_goal_name), None)
+    if not retire_goal:
+        retire_goal = next((g for g in alloc_list if "retire" in (g["name"] or "").lower() or "pension" in (g["name"] or "").lower()), None)
+    ret_funded_str = f"{retire_goal['pct']}%" if retire_goal else "N/A"
+    
+    r1c1, r1c2, r1c3, r1c4 = st.columns(4)
     r1c1.metric("Total Assets", fmt(total_assets()))
     r1c2.metric("Total Liabilities", fmt(total_liabilities()))
-    r1c3.metric("Total Net Worth (Assets - Liabilities)", fmt(total_net_worth()))
+    r1c3.metric("Total Net Worth", fmt(total_net_worth()))
+    r1c4.metric("Goals Fully Funded", goals_met_str)
 
-    r2c1, r2c2, r2c3 = st.columns(3)
+    r2c1, r2c2, r2c3, r2c4 = st.columns(4)
     annual_inc = total_monthly_income() * 12
     annual_exp = total_monthly_expense() * 12
     annual_sur = monthly_surplus() * 12
@@ -1822,23 +1834,10 @@ with tab_dash:
     r2c1.metric(f"Annual Income (Yr {eval_yr})",   fmt(annual_inc))
     r2c2.metric(f"Annual Expenses (Yr {eval_yr})", fmt(annual_exp))
     r2c3.metric(f"Annual Surplus (Yr {eval_yr})",  fmt(annual_sur))
-
-    if st.session_state.income or st.session_state.expenses:
-        st.markdown("### Monthly Cash Flow")
-        inc = total_monthly_income(); exp = total_monthly_expense()
-        if exp > 0 and inc > 0:
-            pct = round((inc/exp)*100)
-            css = "badge-green" if pct>=100 else "badge-red"
-            label = f"Expenses Covered ({pct}%) — surplus {fmt_full(inc-exp)}/mo" if pct>=100 \
-                else f"Shortfall ({pct}% covered) — deficit {fmt_full(exp-inc)}/mo"
-            st.markdown(f'<span class="{css}">{label}</span>', unsafe_allow_html=True)
-            cross = expense_coverage_years()
-            if cross: st.caption(f"⚠️ Expenses will overtake income ~Year {cross} at current growth rates.")
-            st.progress(min(pct,100)/100)
+    r2c4.metric("Retirement Corpus Funded", ret_funded_str)
 
     st.markdown("### Goal Coverage")
-    alloc = smart_allocation()
-    if not alloc:
+    if not alloc_list:
         st.info("Add goals and assets to see allocation.")
     else:
         sort_choice = st.selectbox(
@@ -1848,13 +1847,13 @@ with tab_dash:
             key=f"v{_v}_goal_sort",
         )
         if sort_choice == "Target Date (Soonest First)":
-            alloc_sorted = sorted(alloc, key=lambda g: g["start_year"])
+            alloc_sorted = sorted(alloc_list, key=lambda g: g["start_year"])
         elif sort_choice == "Goal Amount (Highest First)":
-            alloc_sorted = sorted(alloc, key=lambda g: g["display_cost"], reverse=True)
+            alloc_sorted = sorted(alloc_list, key=lambda g: g["display_cost"], reverse=True)
         elif sort_choice == "% Completion (Highest First)":
-            alloc_sorted = sorted(alloc, key=lambda g: g["pct"], reverse=True)
+            alloc_sorted = sorted(alloc_list, key=lambda g: g["pct"], reverse=True)
         else:
-            alloc_sorted = sorted(alloc, key=lambda g: g["pct"])
+            alloc_sorted = sorted(alloc_list, key=lambda g: g["pct"])
 
         tiles_html = '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(270px, 1fr)); gap:14px; margin-top:10px;">'
         for g in alloc_sorted:
@@ -1884,6 +1883,62 @@ with tab_dash:
         tiles_html += '</div>'
         st.markdown(tiles_html, unsafe_allow_html=True)
 
+        surplus_today = calculate_surplus_today()
+        all_fully_funded = len(alloc_list) > 0 and all(g.get("pct", 0) >= 100 for g in alloc_list)
+        total_cost_all   = sum(g.get("display_cost", 0) for g in alloc_list)
+        
+        if all_fully_funded and surplus_today > 0:
+            st.markdown(
+                f'<div style="background:linear-gradient(135deg,#059669,#047857); '
+                f'border-radius:10px; padding:18px 24px; margin-top:24px; '
+                f'box-shadow:0 4px 12px rgba(5,150,105,0.3);">'
+                f'<div style="color:#fff; font-size:20px; font-weight:700; margin-bottom:6px;">'
+                f'🎉 All Goals Fully Funded!</div>'
+                f'<div style="color:#d1fae5; font-size:14px; line-height:1.6;">'
+                f'After meeting every goal, your portfolio has an estimated surplus worth '
+                f'<strong style="color:#fff; font-size:17px;">{fmt(surplus_today)}</strong> '
+                f'<b>in today\'s money</b> (as of {THIS_YEAR}).<br/>'
+                f'<em style="color:#a7f3d0; font-size:12px;">Note: surplus accuracy depends on correct '
+                f'CAGRs — see warnings above.</em>'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+            s1, s2, s3, s4 = st.columns(4)
+            s1.metric("Total Assets",      fmt(total_assets()))
+            s2.metric("Total Goal Cost",   fmt(total_cost_all))
+            s3.metric("Weighted CAGR",     f"{weighted_cagr():.1f}%")
+            s4.metric("Surplus (Today's Money)", fmt(surplus_today))
+
+        elif all_fully_funded and surplus_today <= 0:
+            st.markdown(
+                f'<div style="background:linear-gradient(135deg,#0369a1,#0c4a6e); '
+                f'border-radius:10px; padding:18px 24px; margin-top:24px;">'
+                f'<div style="color:#fff; font-size:20px; font-weight:700; margin-bottom:6px;">'
+                f'✅ All Goals Funded — Tight Fit</div>'
+                f'<div style="color:#bae6fd; font-size:14px;">'
+                f'All goals are met but with little headroom. '
+                f'Consider building a buffer against market volatility.'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+        elif len(alloc_list) > 0:
+            total_gap = sum(max(g.get("display_cost",0) - g.get("allocated",0), 0)
+                            for g in alloc_list)
+            st.markdown(
+                f'<div style="background:linear-gradient(135deg,#dc2626,#991b1b); '
+                f'border-radius:10px; padding:18px 24px; margin-top:24px;">'
+                f'<div style="color:#fff; font-size:20px; font-weight:700; margin-bottom:6px;">'
+                f'⚠️ Portfolio Shortfall</div>'
+                f'<div style="color:#fee2e2; font-size:14px;">'
+                f'Total funding gap across all goals: '
+                f'<strong style="color:#fff; font-size:17px;">{fmt(total_gap)}</strong>.<br/>'
+                f'See the Current Add\'l Contribution Required column in the Goal Summary below for per-goal top-up amounts.'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("---")
+    
     if st.session_state.assets or st.session_state.liabilities:
         cl, cr = st.columns(2)
         with cl:
@@ -1911,7 +1966,7 @@ with tab_dash:
             "keeps growing at your portfolio's CAGR while being drawn down (the same principle "
             "the Retirement tab's drawdown simulation uses)."
         )
-        alloc_list       = smart_allocation()
+        
         ai               = avg_inflation()
         ta               = total_assets()
         eq_pct           = sum(a["value"] for a in st.session_state.assets if a["asset_class"]=="Equity") / ta * 100 if ta > 0 else 0
@@ -1993,10 +2048,7 @@ with tab_dash:
             "Recommendation":                    "—",
         })
 
-        st.dataframe(summary_rows, width="stretch", hide_index=True)
-
-        all_fully_funded = len(alloc_list) > 0 and all(g.get("pct", 0) >= 100 for g in alloc_list)
-        total_cost_all   = sum(g.get("display_cost", 0) for g in alloc_list)
+        st.table(pd.DataFrame(summary_rows))
 
         zero_cagr_val = sum(a.get("value",0) for a in st.session_state.assets if (a.get("cagr") or 0) == 0)
         recurring_goals = [g for g in goal_projections() if goal_frequency(g) > 0]
@@ -2034,59 +2086,6 @@ with tab_dash:
                         f"{names}. The app treats a recurring commitment (e.g. school fees every year) as needing "
                         f"the SUM of all its payments — not just the first one — before calling it funded."
                     )
-
-        st.markdown("---")
-        surplus_today = calculate_surplus_today()
-        
-        if all_fully_funded and surplus_today > 0:
-            st.markdown(
-                f'<div style="background:linear-gradient(135deg,#059669,#047857); '
-                f'border-radius:10px; padding:18px 24px; margin-top:8px; '
-                f'box-shadow:0 4px 12px rgba(5,150,105,0.3);">'
-                f'<div style="color:#fff; font-size:20px; font-weight:700; margin-bottom:6px;">'
-                f'🎉 All Goals Fully Funded!</div>'
-                f'<div style="color:#d1fae5; font-size:14px; line-height:1.6;">'
-                f'After meeting every goal, your portfolio has an estimated surplus worth '
-                f'<strong style="color:#fff; font-size:17px;">{fmt(surplus_today)}</strong> '
-                f'<b>in today\'s money</b> (as of {THIS_YEAR}).<br/>'
-                f'<em style="color:#a7f3d0; font-size:12px;">Note: surplus accuracy depends on correct '
-                f'CAGRs — see warnings above.</em>'
-                f'</div></div>',
-                unsafe_allow_html=True,
-            )
-            s1, s2, s3, s4 = st.columns(4)
-            s1.metric("Total Assets",      fmt(total_assets()))
-            s2.metric("Total Goal Cost",   fmt(total_cost_all))
-            s3.metric("Weighted CAGR",     f"{weighted_cagr():.1f}%")
-            s4.metric("Surplus (Today's Money)", fmt(surplus_today))
-
-        elif all_fully_funded and surplus_today <= 0:
-            st.markdown(
-                f'<div style="background:linear-gradient(135deg,#0369a1,#0c4a6e); '
-                f'border-radius:10px; padding:18px 24px; margin-top:8px;">'
-                f'<div style="color:#fff; font-size:20px; font-weight:700; margin-bottom:6px;">'
-                f'✅ All Goals Funded — Tight Fit</div>'
-                f'<div style="color:#bae6fd; font-size:14px;">'
-                f'All goals are met but with little headroom. '
-                f'Consider building a buffer against market volatility.'
-                f'</div></div>',
-                unsafe_allow_html=True,
-            )
-        elif len(alloc_list) > 0:
-            total_gap = sum(max(g.get("display_cost",0) - g.get("allocated",0), 0)
-                            for g in alloc_list)
-            st.markdown(
-                f'<div style="background:linear-gradient(135deg,#dc2626,#991b1b); '
-                f'border-radius:10px; padding:18px 24px; margin-top:8px;">'
-                f'<div style="color:#fff; font-size:20px; font-weight:700; margin-bottom:6px;">'
-                f'⚠️ Portfolio Shortfall</div>'
-                f'<div style="color:#fee2e2; font-size:14px;">'
-                f'Total funding gap across all goals: '
-                f'<strong style="color:#fff; font-size:17px;">{fmt(total_gap)}</strong>.<br/>'
-                f'See the Current Add\'l Contribution Required column above for per-goal top-up amounts.'
-                f'</div></div>',
-                unsafe_allow_html=True,
-            )
 
     FEEDBACK_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbwSEyeDApgHgM71xmef4tryXR9M-jP2Hi9njW8QB_mbBKnWnA4NSE_DJSvU7caAQOTX/exec"
 
@@ -2289,11 +2288,13 @@ with tab_inc_exp:
         proj_start = st.number_input("From", value=ph_start_raw,
             min_value=2000, max_value=2100, step=1, key=f"v{_v}_proj_start")
     with ph_cols[1]:
-        ph_end_raw = int(st.session_state.get("proj_end_year", THIS_YEAR + 30) or THIS_YEAR + 30)
-        if ph_end_raw <= 1000: ph_end_raw = THIS_YEAR + ph_end_raw
-        ph_end_raw = max(proj_start, min(ph_end_raw, 2100))
+        if st.session_state.expenses:
+            ph_end_raw = max((int(e.get("end_year", THIS_YEAR)) for e in st.session_state.expenses), default=THIS_YEAR + 30)
+        else:
+            ph_end_raw = THIS_YEAR + 30
+            
         proj_end = st.number_input("To", value=ph_end_raw,
-            min_value=proj_start, max_value=2100, step=1, key=f"v{_v}_proj_end")
+            min_value=proj_start, max_value=2100, step=1, key=f"v{_v}_proj_end_auto")
     with ph_cols[2]:
         proj_span = max(proj_end - proj_start, 1)
         st.caption(f"Projecting {proj_span} years ({proj_start} – {proj_end})")
