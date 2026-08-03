@@ -1959,6 +1959,7 @@ tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_liab, tab_retire = st.tabs([
 # ══════════════════════════════════════════════════════
 # DASHBOARD
 # ══════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════
 with tab_dash:
     st.markdown("# 1. Dashboard")
     eval_yr = get_dashboard_eval_year()
@@ -1978,19 +1979,45 @@ with tab_dash:
     annual_exp = total_monthly_expense() * 12
     annual_sur = monthly_surplus() * 12
 
+    # PREPARE CONSOLIDATED METRICS
+    ten_yr_proj = fmt(max(portfolio_at_year(10) - liabilities_at_year(10), 0))
+    wcagr_val   = f"{weighted_cagr():.1f}%"
+    risk_prof   = risk_profile()
+    
+    tot_alloc = sum(g["allocated"] for g in alloc_list)
+    tot_cost  = sum(g["display_cost"] for g in alloc_list)
+    funding_ratio = (tot_alloc / tot_cost * 100) if tot_cost > 0 else 0
+    
+    if total_goals == 0:
+        status_emoji, status_text = "⚪", "No Goals"
+    elif fully_funded == total_goals:
+        status_emoji, status_text = "😊", "All Met!"
+    elif funding_ratio >= 75 or fully_funded > 0:
+        status_emoji, status_text = "😐", "Nearly Met"
+    else:
+        status_emoji, status_text = "😟", "Not Met"
+
+    # HTML TILE GENERATOR (Single-line to prevent markdown parsing errors)
     def make_tile(title, value, subtitle=""):
         sub_html = f'<div style="color:#64748b; font-size:11px; margin-top:4px;">{subtitle}</div>' if subtitle else ""
         return f'<div style="background:#1e293b; border-radius:10px; padding:16px 20px; border:1px solid #334155; display:flex; flex-direction:column; justify-content:center;"><div style="color:#94a3b8; font-size:13px; font-weight:600; margin-bottom:4px;">{title}</div><div style="color:#fff; font-size:24px; font-weight:700;">{value}</div>{sub_html}</div>'
 
-    dash_html = '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:14px; margin-bottom:24px;">'
+    # STRICT 4-COLUMN GRID (12 Tiles = 3 Rows of 4)
+    dash_html = '<div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:14px; margin-bottom:24px;">'
     dash_html += make_tile("Total Assets", fmt(total_assets()))
     dash_html += make_tile("Total Liabilities", fmt(total_liabilities()))
     dash_html += make_tile("Total Net Worth", fmt(total_net_worth()))
-    dash_html += make_tile("Goals Fully Funded", goals_met_str)
+    dash_html += make_tile("10-Year Projection", ten_yr_proj)
+    
     dash_html += make_tile(f"Annual Income (Yr {eval_yr})", fmt(annual_inc))
     dash_html += make_tile(f"Annual Expenses (Yr {eval_yr})", fmt(annual_exp))
     dash_html += make_tile(f"Annual Surplus (Yr {eval_yr})", fmt(annual_sur))
+    dash_html += make_tile("Weighted CAGR", wcagr_val)
+    
+    dash_html += make_tile("Goals Fully Funded", goals_met_str)
     dash_html += make_tile("Retirement Corpus Funded", ret_funded_str)
+    dash_html += make_tile("Risk Profile", risk_prof)
+    dash_html += make_tile("Goal Status", status_emoji, status_text)
     dash_html += '</div>'
     
     st.markdown(dash_html, unsafe_allow_html=True)
