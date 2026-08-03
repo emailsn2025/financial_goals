@@ -2127,10 +2127,6 @@ with tab_dash:
         with cr:
             pie = allocation_pie_chart()
             if pie: st.plotly_chart(pie, width="stretch")
-        mc1,mc2,mc3 = st.columns(3)
-        mc1.metric("Weighted CAGR",     f"{weighted_cagr():.1f}%")
-        mc2.metric("Risk Profile",      risk_profile())
-        mc3.metric("10-Year Projection",fmt(max(portfolio_at_year(10) - liabilities_at_year(10), 0)))
 
     recs = get_recommendations()
     if recs:
