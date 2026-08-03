@@ -50,13 +50,13 @@ st.markdown("""
     div[data-testid="stMetric"] { border: 1px solid rgba(128,128,128,0.2); border-radius: 10px; padding: 12px 16px; }
     div[data-testid="stMetric"] label { font-size: 13px !important; }
     
-    /* Aggressively Enlarge Tab Headers */
+    /* Aggressively Enlarge Tab Headers (Change 1: Increased font size) */
     .stTabs button p, .stTabs button span {
-        font-size: 22px !important;
+        font-size: 28px !important;
         font-weight: 700 !important;
     }
     div[data-testid="stTabs"] button {
-        font-size: 22px !important;
+        font-size: 28px !important;
         font-weight: 700 !important;
     }
     
@@ -189,6 +189,8 @@ def asset_tax_rate(asset_class):
     return float(rate) / 100.0
 
 def asset_net_maturity(cost_basis, maturity_amt, asset_class):
+    if not st.session_state.get("apply_tax_drag", False):
+        return maturity_amt, 0.0
     gain = max(maturity_amt - cost_basis, 0)
     tax  = gain * asset_tax_rate(asset_class)
     return maturity_amt - tax, tax
@@ -1537,7 +1539,7 @@ def generate_full_pdf_report():
                 tags, swp,
                 fmt_full(asset_value_at_year(a,5,ai)), fmt_full(asset_value_at_year(a,10,ai)), fmt_full(asset_value_at_year(a,20,ai)),
             ])
-        rows.append(["TOTAL","","", fmt_full(total_assets()), f"{weighted_cagr():.1f}%", "", "",
+        rows.append(["TOTAL","", "—", fmt_full(total_assets()), f"{weighted_cagr():.1f}%", "", "",
                       fmt_full(portfolio_at_year(5)), fmt_full(portfolio_at_year(10)), fmt_full(portfolio_at_year(20))])
         story.append(_pdf_table(headers, rows, font_size=6.5))
     story.append(PageBreak())
@@ -2787,6 +2789,7 @@ with tab_assets:
             else:
                 cagr = manual_cagr
 
+            # Change 2: Backcalculate maturity value if maturity date is present and maturity amount is blank/0
             if mat <= 0 and cagr > 0 and mdate:
                 principal = inv if inv > 0 else val
                 mat = int(round(calc_asset_maturity(principal, cagr, pdate or str(TODAY), mdate)))
@@ -2835,10 +2838,11 @@ with tab_assets:
             tot_mat = 0
             tot_tax = 0
             tot_net = 0
+            apply_tax = st.session_state.get("apply_tax_drag", False)
             for a in st.session_state.assets:
                 tags   = ", ".join(a.get("tagged_goals") or []) or "—"
                 swp    = f'{fmt_full(a.get("swp_monthly",0) or 0)}/mo from {asset_swp_start_display(a)}' \
-                         if (a.get("swp_monthly") or 0) > 0 else "—"
+                         if (a.get("swp_monthly",0) or 0) > 0 else "—"
                 
                 inv = a.get("invested",0) or 0
                 val = a.get("value",0) or 0
@@ -2849,9 +2853,10 @@ with tab_assets:
                 
                 tot_inv += inv
                 tot_mat += mat
-                tot_tax += tax_m
-                tot_net += net_m
+                tot_tax += tax_m if apply_tax else 0
+                tot_net += net_m if apply_tax else mat
                 
+                # Change 3: Dynamically format Tax on Gains and Net Maturity based on tax drag toggle
                 rows.append({
                     "Asset":         a["name"] or "(unnamed)",
                     "Type":          a.get("asset_type","") or "—",
@@ -2861,9 +2866,9 @@ with tab_assets:
                     "Current Value": fmt_full(val),
                     "Maturity Amt":  fmt_full(mat) if mat else "—",
                     "Maturity Date": a.get("maturity_date","") or "—",
-                    "CAGR":          f'{get_asset_eff_cagr(a):.2f}%' + (" (Net)" if st.session_state.get("apply_tax_drag") else ""),
-                    "Tax on Gains":  fmt_full(tax_m) if (tax_m > 0 and st.session_state.get("apply_tax_drag")) else "—",
-                    "Net Maturity":  fmt_full(net_m) if (net_m > 0 and st.session_state.get("apply_tax_drag")) else (fmt_full(mat) if mat else "—"),
+                    "CAGR":          f'{get_asset_eff_cagr(a):.2f}%' + (" (Net)" if apply_tax else ""),
+                    "Tax on Gains":  fmt_full(tax_m) if (tax_m > 0 and apply_tax) else "0",
+                    "Net Maturity":  fmt_full(net_m) if apply_tax else (fmt_full(mat) if mat else "—"),
                     "Tagged Goals":  tags,
                     "SWP":           swp,
                     "5 Yrs":         fmt_full(asset_value_at_year(a, 5, ai)),
@@ -2880,8 +2885,8 @@ with tab_assets:
                 "Maturity Amt":  fmt_full(tot_mat) if tot_mat else "—",
                 "Maturity Date": "",
                 "CAGR":          f"{weighted_cagr():.1f}%",
-                "Tax on Gains":  fmt_full(tot_tax) if (tot_tax > 0 and st.session_state.get("apply_tax_drag")) else "—",
-                "Net Maturity":  fmt_full(tot_net) if (tot_net > 0 and st.session_state.get("apply_tax_drag")) else (fmt_full(tot_mat) if tot_mat else "—"),
+                "Tax on Gains":  fmt_full(tot_tax) if apply_tax else "0",
+                "Net Maturity":  fmt_full(tot_net) if tot_net else "—",
                 "Tagged Goals":  "",
                 "SWP":           "",
                 "5 Yrs":         fmt_full(portfolio_at_year(5)),
