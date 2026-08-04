@@ -51,12 +51,8 @@ st.markdown("""
     div[data-testid="stMetric"] { border: 1px solid rgba(128,128,128,0.2); border-radius: 10px; padding: 12px 16px; }
     div[data-testid="stMetric"] label { font-size: 13px !important; }
     
-    /* Force all Tab Headers to 26px */
-    .stTabs button p, .stTabs button span {
-        font-size: 26px !important;
-        font-weight: 700 !important;
-    }
-    div[data-testid="stTabs"] button {
+    /* Force strictly the Tab Navigation Headers to 26px (prevents enlarging standard buttons) */
+    button[role="tab"] p, button[role="tab"] span {
         font-size: 26px !important;
         font-weight: 700 !important;
     }
