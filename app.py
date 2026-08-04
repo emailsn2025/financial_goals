@@ -226,9 +226,20 @@ def get_asset_eff_cagr(a):
     return c
 
 def display_styled_df(df, height=None):
+    # Set up default arguments
+    kwargs = {
+        'hide_index': True, 
+        'use_container_width': True
+    }
+    
+    # Only add the height argument if a specific number was requested
+    if height is not None:
+        kwargs['height'] = int(height)
+        
     if df.empty:
-        st.dataframe(df, hide_index=True, use_container_width=True, height=height)
+        st.dataframe(df, **kwargs)
         return
+        
     styled = df.style.set_properties(**{
         'text-align': 'center',
         'white-space': 'normal',
@@ -236,7 +247,9 @@ def display_styled_df(df, height=None):
     }).set_table_styles([
         dict(selector='th', props=[('text-align', 'center'), ('white-space', 'normal')])
     ])
-    st.dataframe(styled, hide_index=True, use_container_width=True, height=height)
+    
+    # Unpack the kwargs so height is only passed when valid
+    st.dataframe(styled, **kwargs)
 
 def generate_all_tables_excel_bytes():
     output = io.BytesIO()
