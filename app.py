@@ -458,7 +458,7 @@ def avg_inflation():
     if tm == 0: return 6.0
     return sum((e["monthly"]/tm)*e["inflation"] for e in active)
 
-def total_assets():       return sum(a["value"] for a in get_effective_assets())
+def total_assets():       return sum(a["value"] for a in get_effective_assets() if not a.get("is_virtual_surplus"))
 def total_liabilities():  return sum(float(l.get("principal", 0)) for l in st.session_state.liabilities)
 def total_net_worth():    return total_assets() - total_liabilities()
 def monthly_surplus():    return total_monthly_income() - total_monthly_expense()
@@ -469,7 +469,7 @@ def liabilities_at_year(y):
 def weighted_cagr():
     ta = total_assets()
     if ta == 0: return 0.0
-    return sum((a["value"]/ta) * get_asset_eff_cagr(a) for a in get_effective_assets())
+    return sum((a["value"]/ta) * get_asset_eff_cagr(a) for a in get_effective_assets() if not a.get("is_virtual_surplus"))
 
 def portfolio_at_year(y):
     ai = avg_inflation()
@@ -478,7 +478,7 @@ def portfolio_at_year(y):
 def risk_profile():
     ta = total_assets()
     if ta == 0: return "N/A"
-    eff_assets = get_effective_assets()
+    eff_assets = [a for a in get_effective_assets() if not a.get("is_virtual_surplus")]
     eq   = sum(a["value"] for a in eff_assets if a["asset_class"]=="Equity")/ta*100
     debt = sum(a["value"] for a in eff_assets if a["asset_class"] in ["Debt","Other"])/ta*100
     if eq   > 70: return "Aggressive"
@@ -557,19 +557,15 @@ def goal_value_at_start(g, wcagr_pct):
     r = wcagr_pct / 100
     return sum(cost / ((1 + r) ** (yr - start)) for yr, cost in occs)
 
-# ── Smart allocation: strictly bounds funding to physical assets ──
+# ── Smart allocation: FRACTIONAL APPROACH TO FIX MATH DISTORTION ──
 def smart_allocation():
     ai        = avg_inflation()
     wcagr_pct = weighted_cagr()
-    wcagr     = wcagr_pct / 100
     projs     = goal_projections()
     results   = []
 
     eff_assets = get_effective_assets()
-    untagged_assets = [a for a in eff_assets if not (a.get("tagged_goals") or [])]
-
-    untagged_consumed_fv = 0.0
-    prev_start = 0
+    asset_consumed_frac = {i: 0.0 for i in range(len(eff_assets))}
 
     for g in projs:
         gname   = g["name"] or ""
@@ -577,35 +573,57 @@ def smart_allocation():
         cost    = goal_value_at_start(g, wcagr_pct) if use_cum else g["inflated_cost"]
         yr      = g["start_year"]
 
-        tagged = [a for a in eff_assets if gname and gname in (a.get("tagged_goals") or [])]
-        tagged_val = sum(asset_value_at_year(a, yr, ai) for a in tagged)
-
-        gap = yr - prev_start
-        untagged_consumed_fv = untagged_consumed_fv * compound(1, wcagr_pct, gap) if gap > 0 and wcagr_pct > 0 else untagged_consumed_fv
+        remaining_need = cost
+        allocated_today = 0.0
+        allocated_fv = 0.0
+        tagged_names = []
         
-        raw_untagged_at_yr = sum(asset_value_at_year(a, yr, ai) for a in untagged_assets)
-        untagged_val = max(raw_untagged_at_yr - untagged_consumed_fv, 0)
+        def process_assets_for_smart_alloc(is_tagged_pass):
+            nonlocal remaining_need, allocated_today, allocated_fv
+            for i, a in enumerate(eff_assets):
+                if remaining_need <= 0: break
+                is_tagged = gname and gname in (a.get("tagged_goals") or [])
+                if (is_tagged_pass and is_tagged) or (not is_tagged_pass and not (a.get("tagged_goals") or [])):
+                    if is_tagged_pass and a.get("name") not in tagged_names:
+                        tagged_names.append(a.get("name") or "?")
+                    
+                    avail_frac = 1.0 - asset_consumed_frac[i]
+                    if avail_frac <= 0: continue
+                    
+                    val_at_yr = asset_value_at_year(a, yr, ai)
+                    avail_val = val_at_yr * avail_frac
+                    
+                    if avail_val <= 0: continue
+                    
+                    draw = min(remaining_need, avail_val)
+                    if draw > 0:
+                        frac_used = draw / val_at_yr
+                        asset_consumed_frac[i] += frac_used
+                        remaining_need -= draw
+                        allocated_fv += draw
+                        
+                        val_today = a.get("value", 0) if not a.get("is_virtual_surplus") else 0
+                        draw_today = val_today * frac_used
+                        allocated_today += draw_today
 
-        gap_after_tagged = max(cost - tagged_val, 0)
-        filler           = min(untagged_val, gap_after_tagged)
-        allocated        = min(tagged_val, cost) + filler
-        pct              = round(min((allocated / cost) * 100, 100) if cost > 0 else 0)
+        # 1. Consume Tagged Assets
+        process_assets_for_smart_alloc(is_tagged_pass=True)
+        tagged_contrib_fv = allocated_fv
         
-        allocated_today  = allocated / ((1 + wcagr) ** yr) if wcagr > 0 and yr > 0 else allocated
+        # 2. Consume Untagged Assets
+        process_assets_for_smart_alloc(is_tagged_pass=False)
+        untagged_contrib_fv = allocated_fv - tagged_contrib_fv
 
-        untagged_consumed_fv += filler
-        prev_start = yr
-
-        tagged_names = [a["name"] or "?" for a in tagged]
-
+        pct = round(min((allocated_fv / cost) * 100, 100) if cost > 0 else 0)
         status = "Fully Funded" if pct >= 100 else ("Partially Funded" if pct > 0 else "Unfunded")
+        
         results.append({
             **g,
             "display_cost":     cost,
-            "allocated":        allocated,
+            "allocated":        allocated_fv,
             "allocated_today":  allocated_today,
-            "tagged_contrib":   min(tagged_val, cost),
-            "untagged_contrib": filler,
+            "tagged_contrib":   tagged_contrib_fv,
+            "untagged_contrib": untagged_contrib_fv,
             "tagged_assets":    tagged_names,
             "pct":              pct,
             "status":           status,
@@ -613,59 +631,58 @@ def smart_allocation():
     return results
 
 def calculate_surplus_today():
-    """Calculates the remaining untagged pool plus any excess tagged funds after all goals are funded, discounted to today."""
     ai        = avg_inflation()
     wcagr_pct = weighted_cagr()
-    wcagr     = wcagr_pct / 100
     projs     = goal_projections()
     
     eff_assets = get_effective_assets()
-    untagged_assets = [a for a in eff_assets if not (a.get("tagged_goals") or [])]
-    
-    untagged_consumed_fv = 0.0
-    prev_start = 0
-    total_excess_tagged_today = 0.0
+    asset_consumed_frac = {i: 0.0 for i in range(len(eff_assets))}
     
     for g in projs:
         gname   = g["name"] or ""
         use_cum = goal_uses_cumulative(g)
         cost    = goal_value_at_start(g, wcagr_pct) if use_cum else g["inflated_cost"]
         yr      = g["start_year"]
+        remaining_need = cost
         
-        tagged = [a for a in eff_assets if gname and gname in (a.get("tagged_goals") or [])]
-        tagged_val = sum(asset_value_at_year(a, yr, ai) for a in tagged)
-            
-        gap = yr - prev_start
-        untagged_consumed_fv = untagged_consumed_fv * compound(1, wcagr_pct, gap) if gap > 0 and wcagr_pct > 0 else untagged_consumed_fv
-        raw_untagged_val = sum(asset_value_at_year(a, yr, ai) for a in untagged_assets)
-        untagged_val = max(raw_untagged_val - untagged_consumed_fv, 0)
-            
-        gap_after_tagged = max(cost - tagged_val, 0)
-        excess_tagged    = max(tagged_val - cost, 0)
-        
-        if excess_tagged > 0:
-            total_excess_tagged_today += excess_tagged / ((1 + wcagr) ** yr) if wcagr > 0 and yr > 0 else excess_tagged
+        def process_assets_for_surplus(is_tagged_pass):
+            nonlocal remaining_need
+            for i, a in enumerate(eff_assets):
+                if remaining_need <= 0: break
+                is_tagged = gname and gname in (a.get("tagged_goals") or [])
+                if (is_tagged_pass and is_tagged) or (not is_tagged_pass and not (a.get("tagged_goals") or [])):
+                    avail_frac = 1.0 - asset_consumed_frac[i]
+                    if avail_frac <= 0: continue
+                    
+                    val_at_yr = asset_value_at_year(a, yr, ai)
+                    avail_val = val_at_yr * avail_frac
+                    
+                    draw = min(remaining_need, avail_val)
+                    if draw > 0:
+                        frac_used = draw / val_at_yr
+                        asset_consumed_frac[i] += frac_used
+                        remaining_need -= draw
 
-        filler           = min(untagged_val, gap_after_tagged)
-        untagged_consumed_fv += filler
-        prev_start       = yr
+        process_assets_for_surplus(is_tagged_pass=True)
+        process_assets_for_surplus(is_tagged_pass=False)
         
-    raw_untagged_val_end = sum(asset_value_at_year(a, prev_start, ai) for a in untagged_assets)
-    final_untagged_surplus = max(raw_untagged_val_end - untagged_consumed_fv, 0)
-
-    untagged_surplus_today = final_untagged_surplus / ((1 + wcagr) ** prev_start) if wcagr > 0 and prev_start > 0 else final_untagged_surplus
-    
-    return untagged_surplus_today + total_excess_tagged_today
+    surplus_today = 0.0
+    for i, a in enumerate(eff_assets):
+        if not a.get("is_virtual_surplus"):
+            avail_frac = 1.0 - asset_consumed_frac[i]
+            if avail_frac > 0:
+                val_today = a.get("value", 0)
+                surplus_today += val_today * avail_frac
+            
+    return surplus_today
 
 def compute_granular_asset_allocation():
-    """Generates the asset-level granular allocation table in strict Current Value terms."""
     ai        = avg_inflation()
     wcagr_pct = weighted_cagr()
     projs     = goal_projections()
     
     eff_assets = get_effective_assets()
-    asset_consumed_fv = {i: 0.0 for i in range(len(eff_assets))}
-    prev_yr = {i: 0 for i in range(len(eff_assets))}
+    asset_consumed_frac = {i: 0.0 for i in range(len(eff_assets))}
     
     table_rows = []
     tot_allocated_all = 0.0
@@ -684,23 +701,21 @@ def compute_granular_asset_allocation():
                 if remaining_need <= 0: break
                 is_tagged = gname and gname in (a.get("tagged_goals") or [])
                 if (is_tagged_pass and is_tagged) or (not is_tagged_pass and not (a.get("tagged_goals") or [])):
-                    gap = yr - prev_yr[i]
-                    cagr_pct = get_asset_eff_cagr(a)
-                    if gap > 0 and cagr_pct > 0:
-                        asset_consumed_fv[i] *= ((1 + cagr_pct/100)**gap)
-                    prev_yr[i] = yr
+                    avail_frac = 1.0 - asset_consumed_frac[i]
+                    if avail_frac <= 0: continue
                     
                     val_at_yr = asset_value_at_year(a, yr, ai)
-                    avail_val = max(val_at_yr - asset_consumed_fv[i], 0)
-                    
+                    avail_val = val_at_yr * avail_frac
                     if avail_val <= 0: continue
                     
                     draw = min(remaining_need, avail_val)
                     if draw > 0:
-                        asset_consumed_fv[i] += draw
+                        frac_used = draw / val_at_yr
+                        asset_consumed_frac[i] += frac_used
                         remaining_need -= draw
                         
-                        draw_today = draw / ((1 + cagr_pct/100)**yr) if cagr_pct > 0 and yr > 0 else draw
+                        val_today = a.get("value", 0) if not a.get("is_virtual_surplus") else 0
+                        draw_today = val_today * frac_used
                         tot_allocated_all += draw_today
                         
                         table_rows.append({
@@ -729,26 +744,22 @@ def compute_granular_asset_allocation():
             
     # 3. Surplus / Unallocated Assets
     for i, a in enumerate(eff_assets):
-        cagr_pct = get_asset_eff_cagr(a)
-        yr = prev_yr[i]
-        consumed_today = asset_consumed_fv[i] / ((1 + cagr_pct/100)**yr) if cagr_pct > 0 and yr > 0 else asset_consumed_fv[i]
+        if a.get("is_virtual_surplus"): continue
         
-        if a.get("is_virtual_surplus"):
-            continue # Virtual surplus has 0 value today, show in surplus metrics but omit from today's static asset table
-            
-        val_today = a.get("value", 0)
-        surplus_today = max(val_today - consumed_today, 0)
-        
-        if surplus_today > 1.0:
-            tot_allocated_all += surplus_today
-            table_rows.append({
-                "Goal": "Surplus / Unallocated",
-                "Asset Name": a["name"] or "(unnamed)",
-                "Asset Type": a.get("asset_type", "") or "—",
-                "Asset Class": a["asset_class"],
-                "cv_allocated": surplus_today,
-                "How much of the Asset in Asset Name column is allocated": fmt_full(surplus_today)
-            })
+        avail_frac = 1.0 - asset_consumed_frac[i]
+        if avail_frac > 0.0001:
+            val_today = a.get("value", 0)
+            if val_today > 0:
+                surplus_today = val_today * avail_frac
+                tot_allocated_all += surplus_today
+                table_rows.append({
+                    "Goal": "Surplus / Unallocated",
+                    "Asset Name": a["name"] or "(unnamed)",
+                    "Asset Type": a.get("asset_type", "") or "—",
+                    "Asset Class": a["asset_class"],
+                    "cv_allocated": surplus_today,
+                    "How much of the Asset in Asset Name column is allocated": fmt_full(surplus_today)
+                })
 
     # Calculate % of Goal's Current Funding
     goal_cv_totals = {}
@@ -858,7 +869,7 @@ def get_recommendations():
     alloc = smart_allocation()
     ai    = avg_inflation()
     ta    = total_assets()
-    eff_assets = get_effective_assets()
+    eff_assets = [a for a in get_effective_assets() if not a.get("is_virtual_surplus")]
 
     shortfalls = [a for a in alloc if a["pct"] < 100]
     if shortfalls:
@@ -1188,6 +1199,7 @@ def asset_chart():
     years = list(range(max_y+1))
     fig   = go.Figure(); totals=[0.0]*len(years)
     for i, a in enumerate(get_effective_assets()):
+        if a.get("is_virtual_surplus"): continue
         vals = [asset_value_at_year(a, y, ai) for y in years]
         for j,v in enumerate(vals): totals[j]+=v
         swp_amt = a.get("swp_monthly",0) or 0
@@ -1197,7 +1209,7 @@ def asset_chart():
         fig.add_trace(go.Scatter(x=years, y=vals, name=label,
             line=dict(color=LINE_COLORS[i%len(LINE_COLORS)], width=2),
             hovertemplate="%{y:,.0f}<extra>%{fullData.name}</extra>"))
-    if get_effective_assets():
+    if [a for a in get_effective_assets() if not a.get("is_virtual_surplus")]:
         fig.add_trace(go.Scatter(x=years, y=totals, name="Total Portfolio",
             line=dict(color="#1e293b", width=3, dash="dash"),
             hovertemplate="%{y:,.0f}<extra>Total Portfolio</extra>"))
@@ -1208,7 +1220,9 @@ def asset_chart():
 
 def allocation_pie_chart():
     ct = {}
-    for a in get_effective_assets(): ct[a["asset_class"]] = ct.get(a["asset_class"],0)+a["value"]
+    for a in get_effective_assets():
+        if a.get("is_virtual_surplus"): continue
+        ct[a["asset_class"]] = ct.get(a["asset_class"],0)+a["value"]
     labels,values = list(ct.keys()), list(ct.values())
     if not values or sum(values) == 0: return None
     fig = go.Figure(go.Pie(labels=labels, values=values, hole=0.45,
@@ -1222,6 +1236,7 @@ def allocation_pie_chart():
 def asset_type_pie_chart():
     ct = {}
     for a in get_effective_assets():
+        if a.get("is_virtual_surplus"): continue
         t = (a.get("asset_type") or "").strip() or "Unspecified"
         ct[t] = ct.get(t, 0) + a["value"]
     labels, values = list(ct.keys()), list(ct.values())
@@ -1476,7 +1491,7 @@ def generate_full_pdf_report():
     story.append(Spacer(1, 14))
 
     # --- REST OF THE REPORT ---
-    if get_effective_assets():
+    if [a for a in get_effective_assets() if not a.get("is_virtual_surplus")]:
         chart_row = []
         nw_img = _fig_to_pdf_image(nw_bar_chart(), width_cm=12, height_cm=7.5, name="Net Worth Projection", errors=chart_errors)
         pie_img = _fig_to_pdf_image(allocation_pie_chart(), width_cm=12, height_cm=7.5, name="Asset Allocation (Dashboard)", errors=chart_errors)
@@ -1729,7 +1744,7 @@ def generate_full_pdf_report():
 
     story.append(Paragraph("Retirement Corpus Drawdown", heading_style))
     ret_corpus = float(st.session_state.get("ret_opening_corpus", 0) or 0)
-    ret_goal   = st.session_state.get("ret_goal_name", "")
+    ret_goal_name   = st.session_state.get("ret_goal_name", "")
     ret_qw     = float(st.session_state.get("ret_q_withdrawal", 0) or 0)
     if ret_corpus > 0 and ret_qw > 0:
         ret_return    = st.session_state.get("ret_annual_return", 9.0)
