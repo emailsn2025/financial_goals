@@ -226,13 +226,13 @@ def get_asset_eff_cagr(a):
     return c
 
 def display_styled_df(df, height=None):
-    # Set up default arguments
+    # Set up default kwargs dynamically to prevent InvalidHeightError
     kwargs = {
         'hide_index': True, 
         'use_container_width': True
     }
     
-    # Only add the height argument if a specific number was requested
+    # Only add the height property if a specific integer was given
     if height is not None:
         kwargs['height'] = int(height)
         
@@ -248,7 +248,6 @@ def display_styled_df(df, height=None):
         dict(selector='th', props=[('text-align', 'center'), ('white-space', 'normal')])
     ])
     
-    # Unpack the kwargs so height is only passed when valid
     st.dataframe(styled, **kwargs)
 
 def generate_all_tables_excel_bytes():
