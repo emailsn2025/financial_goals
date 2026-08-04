@@ -3253,117 +3253,115 @@ with tab_retire:
     goal_options= [g["name"] or f"Goal {i+1}" for i,g in enumerate(all_goals)]
     retire_goals= [g for g in all_goals if "retire" in g.get("name","").lower() or "pension" in g.get("name","").lower()]
 
-    col_cfg, col_info = st.columns([1,1])
+    if not goal_options:
+        st.warning("⚠️ Please add at least one goal in the 'Goals' tab first to unlock the Retirement Planner.")
+    else:
+        col_cfg, col_info = st.columns([1,1])
+        with col_cfg:
+            st.markdown("#### Configuration")
 
-    with col_cfg:
-        st.markdown("#### Configuration")
+            default_idx = 0
+            saved_goal_name = st.session_state.get("ret_goal_name", "")
+            if saved_goal_name and saved_goal_name in goal_options:
+                default_idx = goal_options.index(saved_goal_name)
+            elif retire_goals:
+                names = [g["name"] for g in all_goals]
+                default_idx = names.index(retire_goals[0]["name"]) if retire_goals[0]["name"] in names else 0
 
-        if not goal_options:
-            st.warning("Add a goal in the Goals tab first.")
-            st.stop()
+            selected_goal_name = st.selectbox("Select Goal", goal_options,
+                index=default_idx, key=f"v{_v}_ret_goal")
 
-        default_idx = 0
-        saved_goal_name = st.session_state.get("ret_goal_name", "")
-        if saved_goal_name and saved_goal_name in goal_options:
-            default_idx = goal_options.index(saved_goal_name)
-        elif retire_goals:
-            names = [g["name"] for g in all_goals]
-            default_idx = names.index(retire_goals[0]["name"]) if retire_goals[0]["name"] in names else 0
+            st.session_state.ret_goal_name = selected_goal_name
 
-        selected_goal_name = st.selectbox("Select Goal", goal_options,
-            index=default_idx, key=f"v{_v}_ret_goal")
+            eff_assets     = get_effective_assets()
+            tagged_assets  = [a for a in eff_assets if selected_goal_name in (a.get("tagged_goals") or [])]
+            selected_goal  = next((g for g in all_goals if (g["name"] or f"Goal {all_goals.index(g)+1}") == selected_goal_name), None)
+            
+            goal_year_rel  = cal_to_rel(selected_goal.get("start_year", THIS_YEAR)) if selected_goal else 0
+            start_cal_year = rel_to_cal(goal_year_rel)
+            ai             = avg_inflation()
 
-        st.session_state.ret_goal_name = selected_goal_name
+            wcagr_pct = weighted_cagr()
+            allocs = smart_allocation()
+            selected_goal_alloc = next((g for g in allocs if g["name"] == selected_goal_name), None)
+            
+            if selected_goal_alloc:
+                target_cost = selected_goal_alloc["display_cost"]
+                npv_of_cost = goal_npv(selected_goal_alloc, wcagr_pct)
+            else:
+                target_cost = 0.0
+                npv_of_cost = 0.0
 
-        eff_assets     = get_effective_assets()
-        tagged_assets  = [a for a in eff_assets if selected_goal_name in (a.get("tagged_goals") or [])]
-        selected_goal  = next((g for g in all_goals if (g["name"] or f"Goal {all_goals.index(g)+1}") == selected_goal_name), None)
-        
-        goal_year_rel  = cal_to_rel(selected_goal.get("start_year", THIS_YEAR)) if selected_goal else 0
-        start_cal_year = rel_to_cal(goal_year_rel)
-        ai             = avg_inflation()
+            if tagged_assets:
+                projected_corpus = sum(asset_value_at_year(a, goal_year_rel, ai) for a in tagged_assets)
+                dominant_class   = max(set(a["asset_class"] for a in tagged_assets),
+                    key=lambda c: sum(a["value"] for a in tagged_assets if a["asset_class"]==c))
+                st.caption(f"🏷️ {len(tagged_assets)} asset(s) tagged · projected at Yr {rel_to_cal(goal_year_rel)}: **{fmt_full(projected_corpus)}** · class: **{dominant_class}**")
+            else:
+                dominant_class   = "Equity"
+                st.caption("No assets tagged to this goal.")
 
-        wcagr_pct = weighted_cagr()
-        allocs = smart_allocation()
-        selected_goal_alloc = next((g for g in allocs if g["name"] == selected_goal_name), None)
-        
-        if selected_goal_alloc:
-            target_cost = selected_goal_alloc["display_cost"]
-            npv_of_cost = goal_npv(selected_goal_alloc, wcagr_pct)
-        else:
-            target_cost = 0.0
-            npv_of_cost = 0.0
+            st.caption(f"🎯 The NPV for this goal is **{fmt_full(npv_of_cost)}** (Target Cost: {fmt_full(target_cost)})")
 
-        if tagged_assets:
-            projected_corpus = sum(asset_value_at_year(a, goal_year_rel, ai) for a in tagged_assets)
-            dominant_class   = max(set(a["asset_class"] for a in tagged_assets),
-                key=lambda c: sum(a["value"] for a in tagged_assets if a["asset_class"]==c))
-            st.caption(f"🏷️ {len(tagged_assets)} asset(s) tagged · projected at Yr {rel_to_cal(goal_year_rel)}: **{fmt_full(projected_corpus)}** · class: **{dominant_class}**")
-        else:
-            dominant_class   = "Equity"
-            st.caption("No assets tagged to this goal.")
+            saved_corpus = st.session_state.get("ret_opening_corpus", 0) or 0
+            default_corpus = int(saved_corpus) if saved_corpus > 0 else int(npv_of_cost)
+            opening_corpus = currency_input("Opening Corpus (at retirement)",
+                default_corpus,
+                key=f"v{_v}_ret_corpus")
 
-        st.caption(f"🎯 The NPV for this goal is **{fmt_full(npv_of_cost)}** (Target Cost: {fmt_full(target_cost)})")
+            st.session_state.ret_opening_corpus = opening_corpus
 
-        saved_corpus = st.session_state.get("ret_opening_corpus", 0) or 0
-        default_corpus = int(saved_corpus) if saved_corpus > 0 else int(npv_of_cost)
-        opening_corpus = currency_input("Opening Corpus (at retirement)",
-            default_corpus,
-            key=f"v{_v}_ret_corpus")
+            saved_return = st.session_state.get("ret_annual_return", 0.0) or 0.0
+            default_return = round(saved_return, 1) if saved_return > 0 else round(wcagr_pct, 1)
+            annual_return = st.number_input("Expected Annual Return %",
+                value=default_return, min_value=0.0, max_value=30.0, step=0.5,
+                key=f"v{_v}_ret_return")
 
-        st.session_state.ret_opening_corpus = opening_corpus
+            saved_cls = st.session_state.get("ret_tax_class", "")
+            default_cls = saved_cls if saved_cls in ASSET_CLASSES else dominant_class
+            asset_class_for_tax = st.selectbox("Asset Class (for LTCG tax rate)", ASSET_CLASSES,
+                index=ASSET_CLASSES.index(default_cls) if default_cls in ASSET_CLASSES else 1,
+                key=f"v{_v}_ret_cls")
 
-        saved_return = st.session_state.get("ret_annual_return", 0.0) or 0.0
-        default_return = round(saved_return, 1) if saved_return > 0 else round(wcagr_pct, 1)
-        annual_return = st.number_input("Expected Annual Return %",
-            value=default_return, min_value=0.0, max_value=30.0, step=0.5,
-            key=f"v{_v}_ret_return")
+            tax_rate_display = asset_tax_rate(asset_class_for_tax)
+            if not st.session_state.get("apply_tax_drag"):
+                st.caption("LTCG tax rate: **0.0%** (Automatic Tax Drag is currently turned **OFF** in Settings tab)")
+            else:
+                st.caption(f"LTCG tax rate: **{tax_rate_display*100:.1f}%** (based on settings) — on gain portion only")
 
-        saved_cls = st.session_state.get("ret_tax_class", "")
-        default_cls = saved_cls if saved_cls in ASSET_CLASSES else dominant_class
-        asset_class_for_tax = st.selectbox("Asset Class (for LTCG tax rate)", ASSET_CLASSES,
-            index=ASSET_CLASSES.index(default_cls) if default_cls in ASSET_CLASSES else 1,
-            key=f"v{_v}_ret_cls")
+            custom_tax = st.number_input("Override Tax Rate % (0 = use settings)",
+                value=float(st.session_state.get("ret_custom_tax", 20.0)),
+                min_value=0.0, max_value=50.0, step=0.5, key=f"v{_v}_ret_tax")
+            effective_tax = (custom_tax/100) if custom_tax > 0 else None
 
-        tax_rate_display = asset_tax_rate(asset_class_for_tax)
-        if not st.session_state.get("apply_tax_drag"):
-            st.caption("LTCG tax rate: **0.0%** (Automatic Tax Drag is currently turned **OFF** in Settings tab)")
-        else:
-            st.caption(f"LTCG tax rate: **{tax_rate_display*100:.1f}%** (based on settings) — on gain portion only")
+            st.divider()
+            st.markdown("**Quarterly Withdrawal**")
+            monthly_exp = total_monthly_expense()
+            suggested_qw = monthly_exp * 3 * (1 + ai/100) ** goal_year_rel
 
-        custom_tax = st.number_input("Override Tax Rate % (0 = use settings)",
-            value=float(st.session_state.get("ret_custom_tax", 20.0)),
-            min_value=0.0, max_value=50.0, step=0.5, key=f"v{_v}_ret_tax")
-        effective_tax = (custom_tax/100) if custom_tax > 0 else None
+            saved_qw = st.session_state.get("ret_q_withdrawal", 0) or 0
+            default_qw = int(saved_qw) if saved_qw > 0 else (int(suggested_qw) if suggested_qw > 0 else 0)
+            q_withdrawal = currency_input(
+                "Quarterly Withdrawal (inflates annually)",
+                default_qw,
+                key=f"v{_v}_ret_qwd")
+            if monthly_exp > 0:
+                st.caption(f"Suggested: {fmt_full(suggested_qw)} (3× monthly expenses inflated to Yr {rel_to_cal(goal_year_rel)})")
 
-        st.divider()
-        st.markdown("**Quarterly Withdrawal**")
-        monthly_exp = total_monthly_expense()
-        suggested_qw = monthly_exp * 3 * (1 + ai/100) ** goal_year_rel
+            saved_winf = st.session_state.get("ret_w_inflation", 0.0) or 0.0
+            default_winf = round(saved_winf, 1) if saved_winf > 0 else 7.0
+            withdrawal_inflation = st.number_input("Withdrawal Inflation Rate %/yr",
+                value=default_winf, min_value=0.0, max_value=20.0, step=0.5, key=f"v{_v}_ret_winf")
 
-        saved_qw = st.session_state.get("ret_q_withdrawal", 0) or 0
-        default_qw = int(saved_qw) if saved_qw > 0 else (int(suggested_qw) if suggested_qw > 0 else 0)
-        q_withdrawal = currency_input(
-            "Quarterly Withdrawal (inflates annually)",
-            default_qw,
-            key=f"v{_v}_ret_qwd")
-        if monthly_exp > 0:
-            st.caption(f"Suggested: {fmt_full(suggested_qw)} (3× monthly expenses inflated to Yr {rel_to_cal(goal_year_rel)})")
+            st.session_state.ret_annual_return = annual_return
+            st.session_state.ret_tax_class     = asset_class_for_tax
+            st.session_state.ret_custom_tax    = custom_tax
+            st.session_state.ret_q_withdrawal  = q_withdrawal
+            st.session_state.ret_w_inflation   = withdrawal_inflation
 
-        saved_winf = st.session_state.get("ret_w_inflation", 0.0) or 0.0
-        default_winf = round(saved_winf, 1) if saved_winf > 0 else 7.0
-        withdrawal_inflation = st.number_input("Withdrawal Inflation Rate %/yr",
-            value=default_winf, min_value=0.0, max_value=20.0, step=0.5, key=f"v{_v}_ret_winf")
-
-        st.session_state.ret_annual_return = annual_return
-        st.session_state.ret_tax_class     = asset_class_for_tax
-        st.session_state.ret_custom_tax    = custom_tax
-        st.session_state.ret_q_withdrawal  = q_withdrawal
-        st.session_state.ret_w_inflation   = withdrawal_inflation
-
-    with col_info:
-        st.markdown("#### How This Works")
-        st.markdown("""
+        with col_info:
+            st.markdown("#### How This Works")
+            st.markdown("""
 **Each quarter:**
 1. Withdrawal taken from corpus **at the start** (before returns)
 2. Remaining corpus earns the quarterly return
@@ -3380,126 +3378,126 @@ with tab_retire:
 **Tax rates:** Configured via your custom settings in the Settings tab.
 
 Withdrawal inflates every year at your chosen rate.
-        """)
+            """)
 
-    st.divider()
+        st.divider()
 
-    if opening_corpus <= 0:
-        st.info("Enter an opening corpus above to see the projection.")
-    elif q_withdrawal <= 0:
-        st.info("Enter a quarterly withdrawal amount to run the simulation.")
-    else:
-        rows, total_withdrawn = retirement_simulation(
-            opening_corpus, annual_return, asset_class_for_tax,
-            q_withdrawal, withdrawal_inflation, effective_tax, start_cal_year)
-
-        total_quarters = len(rows)
-        total_years    = total_quarters / 4
-        total_tax      = sum(r["Tax Amount"] for r in rows)
-        total_return   = sum(r["Gross Return"] for r in rows)
-
-        m1,m2,m3,m4 = st.columns(4)
-        m1.metric("Corpus Lasts",        f"{total_years:.1f} yrs ({total_quarters} qtrs)")
-        m2.metric("Total Withdrawn",     fmt_full(total_withdrawn))
-        m3.metric("Total Tax Paid",      fmt_full(total_tax))
-        m4.metric("Total Returns Earned",fmt_full(total_return))
-
-        fig = retirement_drawdown_chart(rows)
-        st.plotly_chart(fig, width="stretch")
-
-        st.markdown("### Quarterly Drawdown Table")
-        view = st.radio("View", ["By Quarter","Annual Summary"], horizontal=True, key=f"v{_v}_ret_view")
-
-        if view == "By Quarter":
-            display_rows = [{
-                "Quarter":        r["Quarter"],
-                "Opening Corpus": fmt_full(round(r["Opening Corpus"])),
-                "Withdrawal":     fmt_full(round(r["Withdrawal"])),
-                "Return %":       r["Return %"],
-                "Gross Return":   fmt_full(round(r["Gross Return"])),
-                "Gain Portion":   fmt_full(round(r["Gain Portion"])),
-                "Tax Rate":       r["Tax Rate"],
-                "Tax Amount":     fmt_full(round(r["Tax Amount"])),
-                "Net Return":     fmt_full(round(r["Net Return"])),
-                "Net Gain (Q)":   fmt_full(round(r["Net Gain"])),
-                "Closing Corpus": fmt_full(round(r["Closing Corpus"])),
-            } for r in rows]
-            
-            tot_q_with = sum(r["Withdrawal"] for r in rows)
-            tot_q_gross = sum(r["Gross Return"] for r in rows)
-            tot_q_gain = sum(r["Gain Portion"] for r in rows)
-            tot_q_tax = sum(r["Tax Amount"] for r in rows)
-            tot_q_net_ret = sum(r["Net Return"] for r in rows)
-            tot_q_net_gain = sum(r["Net Gain"] for r in rows)
-            
-            display_rows.append({
-                "Quarter":        "TOTAL",
-                "Opening Corpus": "",
-                "Withdrawal":     fmt_full(round(tot_q_with)),
-                "Return %":       "",
-                "Gross Return":   fmt_full(round(tot_q_gross)),
-                "Gain Portion":   fmt_full(round(tot_q_gain)),
-                "Tax Rate":       "",
-                "Tax Amount":     fmt_full(round(tot_q_tax)),
-                "Net Return":     fmt_full(round(tot_q_net_ret)),
-                "Net Gain (Q)":   fmt_full(round(tot_q_net_gain)),
-                "Closing Corpus": "",
-            })
-            display_styled_df(pd.DataFrame(display_rows), height=450)
+        if opening_corpus <= 0:
+            st.info("Enter an opening corpus above to see the projection.")
+        elif q_withdrawal <= 0:
+            st.info("Enter a quarterly withdrawal amount to run the simulation.")
         else:
-            annual = {}
-            for r in rows:
-                yr = r["Quarter"].split(" ")[0]
-                if yr not in annual:
-                    annual[yr] = {"Year": yr, "Opening Corpus":r["Opening Corpus"],
-                        "Total Withdrawal":0,"Total Gross Return":0,"Total Gain Portion":0,
-                        "Total Tax":0,"Total Net Return":0,"Net Gain":0,"Closing Corpus":0}
-                annual[yr]["Total Withdrawal"]  += r["Withdrawal"]
-                annual[yr]["Total Gross Return"] += r["Gross Return"]
-                annual[yr]["Total Gain Portion"] += r["Gain Portion"]
-                annual[yr]["Total Tax"]          += r["Tax Amount"]
-                annual[yr]["Total Net Return"]   += r["Net Return"]
-                annual[yr]["Net Gain"]           += r["Net Gain"]
-                annual[yr]["Closing Corpus"]      = r["Closing Corpus"]
-            
-            ann_rows = [{
-                "Year":             a["Year"],
-                "Opening Corpus":   fmt_full(round(a["Opening Corpus"])),
-                "Total Withdrawal": fmt_full(round(a["Total Withdrawal"])),
-                "Return %":         f"{annual_return:.1f}%",
-                "Gross Return":     fmt_full(round(a["Total Gross Return"])),
-                "Gain Portion":     fmt_full(round(a["Total Gain Portion"])),
-                "Tax Rate":         f"{(effective_tax or (asset_tax_rate(asset_class_for_tax) if st.session_state.get('apply_tax_drag') else 0.0))*100:.1f}%",
-                "Tax Paid":         fmt_full(round(a["Total Tax"])),
-                "Net Return":       fmt_full(round(a["Total Net Return"])),
-                "Net Gain":         fmt_full(round(a["Net Gain"])),
-                "Closing Corpus":   fmt_full(round(a["Closing Corpus"])),
-            } for a, a in [(yr, data) for yr, data in annual.items()]]
-            
-            tot_a_with = sum(a["Total Withdrawal"] for a in annual.values())
-            tot_a_gross = sum(a["Total Gross Return"] for a in annual.values())
-            tot_a_gain = sum(a["Total Gain Portion"] for a in annual.values())
-            tot_a_tax = sum(a["Total Tax"] for a in annual.values())
-            tot_a_net_ret = sum(a["Total Net Return"] for a in annual.values())
-            tot_a_net_gain = sum(a["Net Gain"] for a in annual.values())
-            
-            ann_rows.append({
-                "Year":             "TOTAL",
-                "Opening Corpus":   "",
-                "Total Withdrawal": fmt_full(round(tot_a_with)),
-                "Return %":         "",
-                "Gross Return":     fmt_full(round(tot_a_gross)),
-                "Gain Portion":     fmt_full(round(tot_a_gain)),
-                "Tax Rate":         "",
-                "Tax Paid":         fmt_full(round(tot_a_tax)),
-                "Net Return":       fmt_full(round(tot_a_net_ret)),
-                "Net Gain":         fmt_full(round(tot_a_net_gain)),
-                "Closing Corpus":   "",
-            })
-            
-            display_styled_df(pd.DataFrame(ann_rows), height=450)
+            rows, total_withdrawn = retirement_simulation(
+                opening_corpus, annual_return, asset_class_for_tax,
+                q_withdrawal, withdrawal_inflation, effective_tax, start_cal_year)
 
-        st.caption(f"Corpus depleted after {total_years:.1f} years · Withdrawn: {fmt_full(total_withdrawn)} · Tax: {fmt_full(total_tax)}")
+            total_quarters = len(rows)
+            total_years    = total_quarters / 4
+            total_tax      = sum(r["Tax Amount"] for r in rows)
+            total_return   = sum(r["Gross Return"] for r in rows)
+
+            m1,m2,m3,m4 = st.columns(4)
+            m1.metric("Corpus Lasts",        f"{total_years:.1f} yrs ({total_quarters} qtrs)")
+            m2.metric("Total Withdrawn",     fmt_full(total_withdrawn))
+            m3.metric("Total Tax Paid",      fmt_full(total_tax))
+            m4.metric("Total Returns Earned",fmt_full(total_return))
+
+            fig = retirement_drawdown_chart(rows)
+            st.plotly_chart(fig, width="stretch")
+
+            st.markdown("### Quarterly Drawdown Table")
+            view = st.radio("View", ["By Quarter","Annual Summary"], horizontal=True, key=f"v{_v}_ret_view")
+
+            if view == "By Quarter":
+                display_rows = [{
+                    "Quarter":        r["Quarter"],
+                    "Opening Corpus": fmt_full(round(r["Opening Corpus"])),
+                    "Withdrawal":     fmt_full(round(r["Withdrawal"])),
+                    "Return %":       r["Return %"],
+                    "Gross Return":   fmt_full(round(r["Gross Return"])),
+                    "Gain Portion":   fmt_full(round(r["Gain Portion"])),
+                    "Tax Rate":       r["Tax Rate"],
+                    "Tax Amount":     fmt_full(round(r["Tax Amount"])),
+                    "Net Return":     fmt_full(round(r["Net Return"])),
+                    "Net Gain (Q)":   fmt_full(round(r["Net Gain"])),
+                    "Closing Corpus": fmt_full(round(r["Closing Corpus"])),
+                } for r in rows]
+                
+                tot_q_with = sum(r["Withdrawal"] for r in rows)
+                tot_q_gross = sum(r["Gross Return"] for r in rows)
+                tot_q_gain = sum(r["Gain Portion"] for r in rows)
+                tot_q_tax = sum(r["Tax Amount"] for r in rows)
+                tot_q_net_ret = sum(r["Net Return"] for r in rows)
+                tot_q_net_gain = sum(r["Net Gain"] for r in rows)
+                
+                display_rows.append({
+                    "Quarter":        "TOTAL",
+                    "Opening Corpus": "",
+                    "Withdrawal":     fmt_full(round(tot_q_with)),
+                    "Return %":       "",
+                    "Gross Return":   fmt_full(round(tot_q_gross)),
+                    "Gain Portion":   fmt_full(round(tot_q_gain)),
+                    "Tax Rate":       "",
+                    "Tax Amount":     fmt_full(round(tot_q_tax)),
+                    "Net Return":     fmt_full(round(tot_q_net_ret)),
+                    "Net Gain (Q)":   fmt_full(round(tot_q_net_gain)),
+                    "Closing Corpus": "",
+                })
+                display_styled_df(pd.DataFrame(display_rows), height=450)
+            else:
+                annual = {}
+                for r in rows:
+                    yr = r["Quarter"].split(" ")[0]
+                    if yr not in annual:
+                        annual[yr] = {"Year": yr, "Opening Corpus":r["Opening Corpus"],
+                            "Total Withdrawal":0,"Total Gross Return":0,"Total Gain Portion":0,
+                            "Total Tax":0,"Total Net Return":0,"Net Gain":0,"Closing Corpus":0}
+                    annual[yr]["Total Withdrawal"]  += r["Withdrawal"]
+                    annual[yr]["Total Gross Return"] += r["Gross Return"]
+                    annual[yr]["Total Gain Portion"] += r["Gain Portion"]
+                    annual[yr]["Total Tax"]          += r["Tax Amount"]
+                    annual[yr]["Total Net Return"]   += r["Net Return"]
+                    annual[yr]["Net Gain"]           += r["Net Gain"]
+                    annual[yr]["Closing Corpus"]      = r["Closing Corpus"]
+                
+                ann_rows = [{
+                    "Year":             a["Year"],
+                    "Opening Corpus":   fmt_full(round(a["Opening Corpus"])),
+                    "Total Withdrawal": fmt_full(round(a["Total Withdrawal"])),
+                    "Return %":         f"{annual_return:.1f}%",
+                    "Gross Return":     fmt_full(round(a["Total Gross Return"])),
+                    "Gain Portion":     fmt_full(round(a["Total Gain Portion"])),
+                    "Tax Rate":         f"{(effective_tax or (asset_tax_rate(asset_class_for_tax) if st.session_state.get('apply_tax_drag') else 0.0))*100:.1f}%",
+                    "Tax Paid":         fmt_full(round(a["Total Tax"])),
+                    "Net Return":       fmt_full(round(a["Total Net Return"])),
+                    "Net Gain":         fmt_full(round(a["Net Gain"])),
+                    "Closing Corpus":   fmt_full(round(a["Closing Corpus"])),
+                } for a, a in [(yr, data) for yr, data in annual.items()]]
+                
+                tot_a_with = sum(a["Total Withdrawal"] for a in annual.values())
+                tot_a_gross = sum(a["Total Gross Return"] for a in annual.values())
+                tot_a_gain = sum(a["Total Gain Portion"] for a in annual.values())
+                tot_a_tax = sum(a["Total Tax"] for a in annual.values())
+                tot_a_net_ret = sum(a["Total Net Return"] for a in annual.values())
+                tot_a_net_gain = sum(a["Net Gain"] for a in annual.values())
+                
+                ann_rows.append({
+                    "Year":             "TOTAL",
+                    "Opening Corpus":   "",
+                    "Total Withdrawal": fmt_full(round(tot_a_with)),
+                    "Return %":         "",
+                    "Gross Return":     fmt_full(round(tot_a_gross)),
+                    "Gain Portion":     fmt_full(round(tot_a_gain)),
+                    "Tax Rate":         "",
+                    "Tax Paid":         fmt_full(round(tot_a_tax)),
+                    "Net Return":       fmt_full(round(tot_a_net_ret)),
+                    "Net Gain":         fmt_full(round(tot_a_net_gain)),
+                    "Closing Corpus":   "",
+                })
+                
+                display_styled_df(pd.DataFrame(ann_rows), height=450)
+
+            st.caption(f"Corpus depleted after {total_years:.1f} years · Withdrawn: {fmt_full(total_withdrawn)} · Tax: {fmt_full(total_tax)}")
 
 # ══════════════════════════════════════════════════════
 # CALCULATOR SETTINGS TAB
