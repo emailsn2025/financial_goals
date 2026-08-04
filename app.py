@@ -59,6 +59,12 @@ st.markdown("""
         font-weight: 700 !important;
     }
     
+    /* Allow dataframes to wrap text in headers */
+    [data-testid="stDataFrame"] th {
+        white-space: normal !important;
+        word-wrap: break-word !important;
+    }
+    
     .badge-green  { background:#059669; color:#fff; padding:2px 10px; border-radius:12px; font-size:13px; font-weight:600; display:inline-block; }
     .badge-amber  { background:#d97706; color:#fff; padding:2px 10px; border-radius:12px; font-size:13px; font-weight:600; display:inline-block; }
     .badge-red    { background:#dc2626; color:#fff; padding:2px 10px; border-radius:12px; font-size:13px; font-weight:600; display:inline-block; }
@@ -114,7 +120,7 @@ def indian_format(n):
     return ("-" if neg else "") + "".join(reversed(parts)) + "," + last3
 
 def _number_format_mode():
-    return st.session_state.get("number_format", "Western")
+    return st.session_state.get("number_format", "Indian")
 
 def fmt(n):
     n = round(n)
@@ -338,7 +344,7 @@ for key, default in [
     ("ret_annual_return", 9.0), ("ret_tax_class", "Equity"),
     ("ret_custom_tax", 20.0), ("ret_q_withdrawal", 0), ("ret_w_inflation", 7.0),
     ("proj_start_year", THIS_YEAR), ("proj_end_year", THIS_YEAR + 30),
-    ("number_format", "Western"), ("apply_tax_drag", False),
+    ("number_format", "Indian"), ("apply_tax_drag", False),
     ("auto_sweep_surplus", False), ("sweep_cagr", 8.0),
 ]:
     if key not in st.session_state:
@@ -555,12 +561,15 @@ def goal_value_at_start(g, wcagr_pct):
 def smart_allocation():
     ai        = avg_inflation()
     wcagr_pct = weighted_cagr()
+    wcagr     = wcagr_pct / 100
     projs     = goal_projections()
     results   = []
 
     eff_assets = get_effective_assets()
-    asset_consumed_fv = {i: 0.0 for i in range(len(eff_assets))}
-    prev_yr = {i: 0 for i in range(len(eff_assets))}
+    untagged_assets = [a for a in eff_assets if not (a.get("tagged_goals") or [])]
+
+    untagged_consumed_fv = 0.0
+    prev_start = 0
 
     for g in projs:
         gname   = g["name"] or ""
@@ -568,58 +577,35 @@ def smart_allocation():
         cost    = goal_value_at_start(g, wcagr_pct) if use_cum else g["inflated_cost"]
         yr      = g["start_year"]
 
-        remaining_need = cost
-        allocated_today = 0.0
-        allocated_fv = 0.0
-        tagged_names = []
-        
-        def process_assets_for_smart_alloc(is_tagged_pass):
-            nonlocal remaining_need, allocated_today, allocated_fv
-            for i, a in enumerate(eff_assets):
-                if remaining_need <= 0: break
-                is_tagged = gname and gname in (a.get("tagged_goals") or [])
-                if (is_tagged_pass and is_tagged) or (not is_tagged_pass and not (a.get("tagged_goals") or [])):
-                    if is_tagged_pass and a.get("name") not in tagged_names:
-                        tagged_names.append(a.get("name") or "?")
-                    
-                    gap = yr - prev_yr[i]
-                    cagr_pct = get_asset_eff_cagr(a)
-                    if gap > 0 and cagr_pct > 0:
-                        asset_consumed_fv[i] *= ((1 + cagr_pct/100)**gap)
-                    prev_yr[i] = yr
-                    
-                    val_at_yr = asset_value_at_year(a, yr, ai)
-                    avail_val = max(val_at_yr - asset_consumed_fv[i], 0)
-                    
-                    if avail_val <= 0: continue
-                    
-                    draw = min(remaining_need, avail_val)
-                    if draw > 0:
-                        asset_consumed_fv[i] += draw
-                        remaining_need -= draw
-                        allocated_fv += draw
-                        
-                        draw_today = draw / ((1 + cagr_pct/100)**yr) if cagr_pct > 0 and yr > 0 else draw
-                        allocated_today += draw_today
+        tagged = [a for a in eff_assets if gname and gname in (a.get("tagged_goals") or [])]
+        tagged_val = sum(asset_value_at_year(a, yr, ai) for a in tagged)
 
-        # 1. Consume Tagged Assets
-        process_assets_for_smart_alloc(is_tagged_pass=True)
-        tagged_contrib_fv = allocated_fv
+        gap = yr - prev_start
+        untagged_consumed_fv = untagged_consumed_fv * compound(1, wcagr_pct, gap) if gap > 0 and wcagr_pct > 0 else untagged_consumed_fv
         
-        # 2. Consume Untagged Assets
-        process_assets_for_smart_alloc(is_tagged_pass=False)
-        untagged_contrib_fv = allocated_fv - tagged_contrib_fv
+        raw_untagged_at_yr = sum(asset_value_at_year(a, yr, ai) for a in untagged_assets)
+        untagged_val = max(raw_untagged_at_yr - untagged_consumed_fv, 0)
 
-        pct = round(min((allocated_fv / cost) * 100, 100) if cost > 0 else 0)
+        gap_after_tagged = max(cost - tagged_val, 0)
+        filler           = min(untagged_val, gap_after_tagged)
+        allocated        = min(tagged_val, cost) + filler
+        pct              = round(min((allocated / cost) * 100, 100) if cost > 0 else 0)
+        
+        allocated_today  = allocated / ((1 + wcagr) ** yr) if wcagr > 0 and yr > 0 else allocated
+
+        untagged_consumed_fv += filler
+        prev_start = yr
+
+        tagged_names = [a["name"] or "?" for a in tagged]
+
         status = "Fully Funded" if pct >= 100 else ("Partially Funded" if pct > 0 else "Unfunded")
-        
         results.append({
             **g,
             "display_cost":     cost,
-            "allocated":        allocated_fv,
+            "allocated":        allocated,
             "allocated_today":  allocated_today,
-            "tagged_contrib":   tagged_contrib_fv,
-            "untagged_contrib": untagged_contrib_fv,
+            "tagged_contrib":   min(tagged_val, cost),
+            "untagged_contrib": filler,
             "tagged_assets":    tagged_names,
             "pct":              pct,
             "status":           status,
@@ -627,55 +613,49 @@ def smart_allocation():
     return results
 
 def calculate_surplus_today():
+    """Calculates the remaining untagged pool plus any excess tagged funds after all goals are funded, discounted to today."""
     ai        = avg_inflation()
     wcagr_pct = weighted_cagr()
+    wcagr     = wcagr_pct / 100
     projs     = goal_projections()
     
     eff_assets = get_effective_assets()
-    asset_consumed_fv = {i: 0.0 for i in range(len(eff_assets))}
-    prev_yr = {i: 0 for i in range(len(eff_assets))}
+    untagged_assets = [a for a in eff_assets if not (a.get("tagged_goals") or [])]
+    
+    untagged_consumed_fv = 0.0
+    prev_start = 0
+    total_excess_tagged_today = 0.0
     
     for g in projs:
         gname   = g["name"] or ""
         use_cum = goal_uses_cumulative(g)
         cost    = goal_value_at_start(g, wcagr_pct) if use_cum else g["inflated_cost"]
         yr      = g["start_year"]
-        remaining_need = cost
         
-        def process_assets_for_surplus(is_tagged_pass):
-            nonlocal remaining_need
-            for i, a in enumerate(eff_assets):
-                if remaining_need <= 0: break
-                is_tagged = gname and gname in (a.get("tagged_goals") or [])
-                if (is_tagged_pass and is_tagged) or (not is_tagged_pass and not (a.get("tagged_goals") or [])):
-                    gap = yr - prev_yr[i]
-                    cagr_pct = get_asset_eff_cagr(a)
-                    if gap > 0 and cagr_pct > 0:
-                        asset_consumed_fv[i] *= ((1 + cagr_pct/100)**gap)
-                    prev_yr[i] = yr
-                    
-                    val_at_yr = asset_value_at_year(a, yr, ai)
-                    avail_val = max(val_at_yr - asset_consumed_fv[i], 0)
-                    
-                    draw = min(remaining_need, avail_val)
-                    if draw > 0:
-                        asset_consumed_fv[i] += draw
-                        remaining_need -= draw
-
-        process_assets_for_surplus(is_tagged_pass=True)
-        process_assets_for_surplus(is_tagged_pass=False)
-        
-    surplus_today = 0.0
-    for i, a in enumerate(eff_assets):
-        cagr_pct = get_asset_eff_cagr(a)
-        yr = prev_yr[i]
-        consumed_today = asset_consumed_fv[i] / ((1 + cagr_pct/100)**yr) if cagr_pct > 0 and yr > 0 else asset_consumed_fv[i]
-        
-        if not a.get("is_virtual_surplus"):
-            val_today = a.get("value", 0)
-            surplus_today += max(val_today - consumed_today, 0)
+        tagged = [a for a in eff_assets if gname and gname in (a.get("tagged_goals") or [])]
+        tagged_val = sum(asset_value_at_year(a, yr, ai) for a in tagged)
             
-    return surplus_today
+        gap = yr - prev_start
+        untagged_consumed_fv = untagged_consumed_fv * compound(1, wcagr_pct, gap) if gap > 0 and wcagr_pct > 0 else untagged_consumed_fv
+        raw_untagged_val = sum(asset_value_at_year(a, yr, ai) for a in untagged_assets)
+        untagged_val = max(raw_untagged_val - untagged_consumed_fv, 0)
+            
+        gap_after_tagged = max(cost - tagged_val, 0)
+        excess_tagged    = max(tagged_val - cost, 0)
+        
+        if excess_tagged > 0:
+            total_excess_tagged_today += excess_tagged / ((1 + wcagr) ** yr) if wcagr > 0 and yr > 0 else excess_tagged
+
+        filler           = min(untagged_val, gap_after_tagged)
+        untagged_consumed_fv += filler
+        prev_start       = yr
+        
+    raw_untagged_val_end = sum(asset_value_at_year(a, prev_start, ai) for a in untagged_assets)
+    final_untagged_surplus = max(raw_untagged_val_end - untagged_consumed_fv, 0)
+
+    untagged_surplus_today = final_untagged_surplus / ((1 + wcagr) ** prev_start) if wcagr > 0 and prev_start > 0 else final_untagged_surplus
+    
+    return untagged_surplus_today + total_excess_tagged_today
 
 def compute_granular_asset_allocation():
     """Generates the asset-level granular allocation table in strict Current Value terms."""
@@ -1656,6 +1636,8 @@ def generate_full_pdf_report():
         f"<b>Weighted CAGR:</b> {weighted_cagr():.1f}%", normal_style))
     story.append(Spacer(1, 6))
     eff_assets = get_effective_assets()
+    apply_tax_summary = st.session_state.get("apply_tax_drag", False)
+    
     if eff_assets:
         if len(eff_assets) <= 20:
             asset_img = _fig_to_pdf_image(asset_chart(), width_cm=25, height_cm=9, name="Asset Growth Chart", errors=chart_errors)
@@ -1676,29 +1658,53 @@ def generate_full_pdf_report():
             story.append(Spacer(1, 8))
 
         ai = avg_inflation()
-        headers = ["Asset","Type","Class","Current Value","CAGR","Tagged Goals","SWP","5 Yrs","10 Yrs","20 Yrs"]
+        headers = ["Asset","Type","Class","Cur Val","Gross CAGR"]
+        if apply_tax_summary:
+            headers.extend(["Tax %", "Net CAGR"])
+        headers.extend(["Goals","SWP","5 Yrs","10 Yrs","20 Yrs"])
+        
         rows = []
         for a in eff_assets:
             tags = ", ".join(a.get("tagged_goals") or []) or "—"
-            swp  = f'{fmt_full(a.get("swp_monthly",0) or 0)}/mo from {asset_swp_start_display(a)}' \
-                   if (a.get("swp_monthly") or 0) > 0 else "—"
+            swp  = f'{fmt_full(a.get("swp_monthly",0) or 0)}/mo' if (a.get("swp_monthly") or 0) > 0 else "—"
             
-            inv = a.get("invested",0) or 0
             val = a.get("value",0) or 0
-            mat = a.get("maturity_amt",0) or 0
-            cost_basis = inv if inv > 0 else val
-            net_m, tax_m = asset_net_maturity(cost_basis, mat, a["asset_class"]) if mat > 0 else (0,0)
             
-            tax_disp = fmt_full(tax_m) if (tax_m > 0 and st.session_state.get("apply_tax_drag")) else "—"
-            net_disp = fmt_full(net_m) if (net_m > 0 and st.session_state.get("apply_tax_drag")) else (fmt_full(mat) if mat else "—")
-            
-            rows.append([
-                a["name"] or "—", a.get("asset_type","") or "—", a["asset_class"], fmt_full(a["value"]) if not a.get("is_virtual_surplus") else "—", f'{get_asset_eff_cagr(a):.2f}%',
+            row_data = [
+                a["name"] or "—", 
+                a.get("asset_type","") or "—", 
+                a["asset_class"],
+                fmt_full(val) if not a.get("is_virtual_surplus") else "—",
+                f'{a.get("cagr", 0.0):.2f}%'
+            ]
+            if apply_tax_summary:
+                row_data.extend([
+                    f'{asset_tax_rate(a["asset_class"])*100:.1f}%',
+                    f'{get_asset_eff_cagr(a):.2f}%'
+                ])
+            row_data.extend([
                 tags, swp,
-                fmt_full(asset_value_at_year(a,5,ai)), fmt_full(asset_value_at_year(a,10,ai)), fmt_full(asset_value_at_year(a,20,ai)),
+                fmt_full(asset_value_at_year(a,5,ai)),
+                fmt_full(asset_value_at_year(a,10,ai)),
+                fmt_full(asset_value_at_year(a,20,ai))
             ])
-        rows.append(["TOTAL","", "—", fmt_full(total_assets()), f"{weighted_cagr():.1f}%", "", "",
-                      fmt_full(portfolio_at_year(5)), fmt_full(portfolio_at_year(10)), fmt_full(portfolio_at_year(20))])
+            rows.append(row_data)
+            
+        tot_row = [
+            "TOTAL", "", "—", fmt_full(total_assets()), "—"
+        ]
+        if apply_tax_summary:
+            tot_row.extend(["—", f"{weighted_cagr():.1f}%"])
+        else:
+            tot_row[-1] = f"{weighted_cagr():.1f}%"
+            
+        tot_row.extend([
+            "", "",
+            fmt_full(portfolio_at_year(5)),
+            fmt_full(portfolio_at_year(10)),
+            fmt_full(portfolio_at_year(20))
+        ])
+        rows.append(tot_row)
         story.append(_pdf_table(headers, rows, font_size=6.5))
     story.append(PageBreak())
 
@@ -1809,6 +1815,7 @@ def generate_full_pdf_report():
     doc.build(story)
     buffer.seek(0)
     return buffer.getvalue(), chart_errors
+
 def get_logo_b64():
     logo_path = os.path.join(os.path.dirname(__file__), "shiftgaze_logo.jpg")
     if os.path.exists(logo_path):
@@ -2889,9 +2896,9 @@ with tab_assets:
     with st.expander("⚙️ Tax Configuration & Settings", expanded=False):
         td_col1, td_col2 = st.columns([1, 2])
         with td_col1:
-            apply_td = st.toggle("Apply Automatic Tax Drag", value=st.session_state.apply_tax_drag, key=f"v{_v}_tax_drag_toggle")
-            if apply_td != st.session_state.apply_tax_drag:
-                st.session_state.apply_tax_drag = apply_td
+            apply_tax = st.toggle("Apply Automatic Tax Drag", value=st.session_state.apply_tax_drag, key=f"v{_v}_tax_drag_toggle")
+            if apply_tax != st.session_state.apply_tax_drag:
+                st.session_state.apply_tax_drag = apply_tax
                 clear_asset_cache()
                 st.rerun()
         with td_col2:
@@ -2946,26 +2953,57 @@ with tab_assets:
 
     gnames = goal_names()
 
-    assets_df = pd.DataFrame([{
-        "Asset Name":       a.get("name", ""),
-        "Asset Type":       a.get("asset_type", ""),
-        "Class":            a.get("asset_class", "Equity") if a.get("asset_class") in ASSET_CLASSES else "Equity",
-        "Purchase Date":    safe_date(a.get("purchase_date")),
-        "Invested":         fmt_full(a.get("invested", 0) or 0),
-        "Current Value":    fmt_full(a.get("value", 0) or 0),
-        "Maturity Amount":  fmt_full(a.get("maturity_amt", 0) or 0),
-        "Maturity Date":    safe_date(a.get("maturity_date")),
-        "CAGR %":           float(a.get("cagr", 0.0) or 0.0),
-        "Tag Goal":         a.get("tagged_goals")[0] if a.get("tagged_goals") else "",
-        "SWP Monthly":      fmt_full(a.get("swp_monthly", 0) or 0),
-        "SWP Start Yr":     asset_swp_start_display(a),
-    } for a in st.session_state.assets])
+    assets_data = []
+    for a in st.session_state.assets:
+        row = {
+            "Asset Name":       a.get("name", ""),
+            "Asset Type":       a.get("asset_type", ""),
+            "Class":            a.get("asset_class", "Equity") if a.get("asset_class") in ASSET_CLASSES else "Equity",
+            "Purch Date":       safe_date(a.get("purchase_date")),
+            "Invested":         fmt_full(a.get("invested", 0) or 0),
+            "Cur Val":          fmt_full(a.get("value", 0) or 0),
+            "Mat Amt":          fmt_full(a.get("maturity_amt", 0) or 0),
+            "Mat Date":         safe_date(a.get("maturity_date")),
+            "Gross CAGR %":     float(a.get("cagr", 0.0) or 0.0),
+        }
+        if apply_tax:
+            tr = float(st.session_state.get(f"tax_rate_{row['Class']}", DEFAULT_TAX_RATES.get(row['Class'], 0.0)))
+            row["Tax %"] = tr
+            row["Net CAGR %"] = row["Gross CAGR %"] * (1 - tr/100.0)
+            
+        row["Tag Goal"] = a.get("tagged_goals")[0] if a.get("tagged_goals") else ""
+        row["SWP /mo"]  = fmt_full(a.get("swp_monthly", 0) or 0)
+        row["SWP Yr"]   = asset_swp_start_display(a)
+        assets_data.append(row)
 
-    if assets_df.empty:
-        assets_df = pd.DataFrame(columns=[
-            "Asset Name", "Asset Type", "Class", "Purchase Date", "Invested", "Current Value",
-            "Maturity Amount", "Maturity Date", "CAGR %", "Tag Goal", "SWP Monthly", "SWP Start Yr"
-        ])
+    cols_list = ["Asset Name", "Asset Type", "Class", "Purch Date", "Invested", "Cur Val", "Mat Amt", "Mat Date", "Gross CAGR %"]
+    if apply_tax:
+        cols_list.extend(["Tax %", "Net CAGR %"])
+    cols_list.extend(["Tag Goal", "SWP /mo", "SWP Yr"])
+
+    if not assets_data:
+        assets_df = pd.DataFrame(columns=cols_list)
+    else:
+        assets_df = pd.DataFrame(assets_data)
+
+    col_cfg = {
+        "Asset Name":      st.column_config.TextColumn("Asset Name", width="small"),
+        "Asset Type":      st.column_config.TextColumn("Asset Type", width="small", help="e.g. Mutual Fund, FD, PMS, Direct Equity, Sovereign Gold Bond"),
+        "Class":           st.column_config.SelectboxColumn("Class", options=ASSET_CLASSES, required=True, width="small"),
+        "Purch Date":      st.column_config.DateColumn("Purch Date", format="YYYY-MM-DD", help="Double click to open calendar", width="small"),
+        "Invested":        st.column_config.TextColumn("Invested", help="e.g. 1,800,000", width="small"),
+        "Cur Val":         st.column_config.TextColumn("Cur Val", help="e.g. 1,800,000", width="small"),
+        "Mat Amt":         st.column_config.TextColumn("Mat Amt", help="e.g. 1,800,000", width="small"),
+        "Mat Date":        st.column_config.DateColumn("Mat Date", format="YYYY-MM-DD", help="Double click to open calendar", width="small"),
+        "Gross CAGR %":    st.column_config.NumberColumn("Gross CAGR %", format="%.2f", min_value=0.0, max_value=50.0, step=0.5, help="Auto-calculated if maturity info provided", width="small"),
+    }
+    if apply_tax:
+        col_cfg["Tax %"]      = st.column_config.NumberColumn("Tax %", format="%.1f", disabled=True, width="small")
+        col_cfg["Net CAGR %"] = st.column_config.NumberColumn("Net CAGR %", format="%.2f", disabled=True, width="small")
+        
+    col_cfg["Tag Goal"] = st.column_config.SelectboxColumn("Tag Goal", options=[""] + gnames, help="Select a single goal to tag this asset to", width="small")
+    col_cfg["SWP /mo"]  = st.column_config.TextColumn("SWP /mo", help="e.g. 1,800,000", width="small")
+    col_cfg["SWP Yr"]   = st.column_config.NumberColumn("SWP Yr", format="%d", min_value=2000, max_value=2100, help="Calendar year, e.g. 2030", width="small")
 
     edited_assets = st.data_editor(
         assets_df,
@@ -2973,32 +3011,21 @@ with tab_assets:
         use_container_width=True,
         key=f"assets_editor_v{_v}_{st.session_state.number_format}",
         height=min(400 + len(assets_df) * 8, 700),
-        column_config={
-            "Asset Name":      st.column_config.TextColumn("Asset Name", width="medium"),
-            "Asset Type":      st.column_config.TextColumn("Asset Type", width="medium", help="e.g. Mutual Fund, FD, PMS, Direct Equity, Sovereign Gold Bond"),
-            "Class":           st.column_config.SelectboxColumn("Class", options=ASSET_CLASSES, required=True),
-            "Purchase Date":   st.column_config.DateColumn("Purchase Date", format="YYYY-MM-DD", help="Double click to open calendar"),
-            "Invested":        st.column_config.TextColumn("Invested", help="e.g. 1,800,000"),
-            "Current Value":   st.column_config.TextColumn("Current Value", help="e.g. 1,800,000"),
-            "Maturity Amount": st.column_config.TextColumn("Maturity Amount", help="e.g. 1,800,000"),
-            "Maturity Date":   st.column_config.DateColumn("Maturity Date", format="YYYY-MM-DD", help="Double click to open calendar"),
-            "CAGR %":          st.column_config.NumberColumn("Expected Gross CAGR %", format="%.2f", min_value=0.0, max_value=50.0, step=0.5, help="Auto-calculated if maturity info provided"),
-            "Tag Goal":        st.column_config.SelectboxColumn("Tag Goal", options=[""] + gnames, help="Select a single goal to tag this asset to"),
-            "SWP Monthly":     st.column_config.TextColumn("SWP Monthly", help="e.g. 1,800,000"),
-            "SWP Start Yr":    st.column_config.NumberColumn("SWP Start Yr", format="%d", min_value=2000, max_value=2100, help="Calendar year, e.g. 2030"),
-        }
+        column_config=col_cfg,
+        column_order=cols_list
     )
+    
     st.caption("Edits above are staged in the table — nothing recalculates until you click Apply.")
-    apply_assets = st.button("✅ Apply Asset Changes", key=f"v{_v}_apply_assets", type="primary", use_container_width=True)
+    apply_assets_btn = st.button("✅ Apply Asset Changes", key=f"v{_v}_apply_assets", type="primary", use_container_width=True)
 
-    if apply_assets:
+    if apply_assets_btn:
         new_assets_state = []
         defaulted_cagr_assets = []
         for _, r in edited_assets.iterrows():
             raw_name = r.get("Asset Name", "")
             name = "" if pd.isna(raw_name) else str(raw_name).strip()
             
-            raw_val = r.get("Current Value", 0)
+            raw_val = r.get("Cur Val", 0)
             val = 0 if pd.isna(raw_val) else int(parse_amount(str(raw_val)))
 
             raw_inv = r.get("Invested", 0)
@@ -3013,19 +3040,19 @@ with tab_assets:
             raw_atype = r.get("Asset Type", "")
             atype = "" if pd.isna(raw_atype) else str(raw_atype).strip()
 
-            raw_mat = r.get("Maturity Amount", 0)
+            raw_mat = r.get("Mat Amt", 0)
             mat = 0 if pd.isna(raw_mat) else int(parse_amount(str(raw_mat)))
 
-            raw_pdate = r.get("Purchase Date")
+            raw_pdate = r.get("Purch Date")
             pdate = raw_pdate.strftime("%Y-%m-%d") if pd.notna(raw_pdate) and hasattr(raw_pdate, 'strftime') else ""
 
-            raw_mdate = r.get("Maturity Date")
+            raw_mdate = r.get("Mat Date")
             mdate = raw_mdate.strftime("%Y-%m-%d") if pd.notna(raw_mdate) and hasattr(raw_mdate, 'strftime') else ""
 
             cls = r.get("Class", "Equity")
             if pd.isna(cls) or cls not in ASSET_CLASSES: cls = "Equity"
 
-            raw_cagr = r.get("CAGR %", None)
+            raw_cagr = r.get("Gross CAGR %", None)
             cagr_is_blank = pd.isna(raw_cagr) or str(raw_cagr).strip() == ""
             manual_cagr = 0.0 if cagr_is_blank else float(raw_cagr)
 
@@ -3049,9 +3076,9 @@ with tab_assets:
             tag_str = "" if pd.isna(raw_tag) else str(raw_tag).strip()
             tags = [tag_str] if tag_str and tag_str in gnames else []
 
-            raw_swp = r.get("SWP Monthly", 0)
+            raw_swp = r.get("SWP /mo", 0)
             swp = 0 if pd.isna(raw_swp) else int(parse_amount(str(raw_swp)))
-            swpyr = int(safe_cell(r, "SWP Start Yr", THIS_YEAR))
+            swpyr = int(safe_cell(r, "SWP Yr", THIS_YEAR))
 
             new_assets_state.append({
                 "name":           name,
@@ -3089,11 +3116,10 @@ with tab_assets:
             tot_mat = 0
             tot_tax = 0
             tot_net = 0
-            apply_tax = st.session_state.get("apply_tax_drag", False)
+            
             for a in eff_assets:
                 tags   = ", ".join(a.get("tagged_goals") or []) or "—"
-                swp    = f'{fmt_full(a.get("swp_monthly",0) or 0)}/mo from {asset_swp_start_display(a)}' \
-                         if (a.get("swp_monthly",0) or 0) > 0 else "—"
+                swp    = f'{fmt_full(a.get("swp_monthly",0) or 0)}/mo' if (a.get("swp_monthly") or 0) > 0 else "—"
                 
                 inv = a.get("invested",0) or 0
                 val = a.get("value",0) or 0
@@ -3107,16 +3133,22 @@ with tab_assets:
                 tot_tax += tax_m if apply_tax else 0
                 tot_net += net_m if apply_tax else mat
                 
-                rows.append({
+                row_data = {
                     "Asset":         a["name"] or "(unnamed)",
                     "Type":          a.get("asset_type","") or "—",
                     "Class":         a["asset_class"],
-                    "Purchase Date": a.get("purchase_date","") or "—",
+                    "Purch Date":    a.get("purchase_date","") or "—",
                     "Invested":      fmt_full(inv) if inv else "—",
-                    "Current Value": fmt_full(val) if not a.get("is_virtual_surplus") else "—",
-                    "Maturity Amt":  fmt_full(mat) if mat else "—",
-                    "Maturity Date": a.get("maturity_date","") or "—",
-                    "CAGR":          f'{get_asset_eff_cagr(a):.2f}%' + (" (Net)" if apply_tax else ""),
+                    "Cur Val":       fmt_full(val) if not a.get("is_virtual_surplus") else "—",
+                    "Mat Amt":       fmt_full(mat) if mat else "—",
+                    "Mat Date":      a.get("maturity_date","") or "—",
+                    "Gross CAGR":    f'{a.get("cagr", 0.0):.2f}%',
+                }
+                if apply_tax:
+                    row_data["Tax Rate %"] = f'{asset_tax_rate(a["asset_class"])*100:.1f}%'
+                    row_data["Net CAGR"]   = f'{get_asset_eff_cagr(a):.2f}%'
+                    
+                row_data.update({
                     "Tax on Gains":  fmt_full(tax_m) if (tax_m > 0 and apply_tax) else "0",
                     "Net Maturity":  fmt_full(net_m) if apply_tax else (fmt_full(mat) if mat else "—"),
                     "Tagged Goals":  tags,
@@ -3125,16 +3157,26 @@ with tab_assets:
                     "10 Yrs":        fmt_full(asset_value_at_year(a,10, ai)),
                     "20 Yrs":        fmt_full(asset_value_at_year(a,20, ai)),
                 })
-            rows.append({
+                rows.append(row_data)
+                
+            tot_data = {
                 "Asset":         "TOTAL",
                 "Type":          "",
                 "Class":         "",
-                "Purchase Date": "",
+                "Purch Date":    "",
                 "Invested":      fmt_full(tot_inv) if tot_inv else "—",
-                "Current Value": fmt_full(total_assets()),
-                "Maturity Amt":  fmt_full(tot_mat) if tot_mat else "—",
-                "Maturity Date": "",
-                "CAGR":          f"{weighted_cagr():.1f}%",
+                "Cur Val":       fmt_full(total_assets()),
+                "Mat Amt":       fmt_full(tot_mat) if tot_mat else "—",
+                "Mat Date":      "",
+                "Gross CAGR":    "—",
+            }
+            if apply_tax:
+                tot_data["Tax Rate %"] = "—"
+                tot_data["Net CAGR"]   = f"{weighted_cagr():.1f}%"
+            else:
+                tot_data["Gross CAGR"] = f"{weighted_cagr():.1f}%"
+                
+            tot_data.update({
                 "Tax on Gains":  fmt_full(tot_tax) if apply_tax else "0",
                 "Net Maturity":  fmt_full(tot_net) if tot_net else "—",
                 "Tagged Goals":  "",
@@ -3143,6 +3185,7 @@ with tab_assets:
                 "10 Yrs":        fmt_full(portfolio_at_year(10)),
                 "20 Yrs":        fmt_full(portfolio_at_year(20)),
             })
+            rows.append(tot_data)
             st.dataframe(rows, width="stretch", hide_index=True)
 
 # ══════════════════════════════════════════════════════
