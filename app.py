@@ -2015,7 +2015,7 @@ tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_liab, tab_retire, tab_settings
     "4. Assets", 
     "5. 💳 Liabilities", 
     "6. 🏖️ Retirement",
-    "7. ⚙️ Settings"
+    "7. ⚙️ Calculator Settings"
 ])
 
 # ══════════════════════════════════════════════════════
