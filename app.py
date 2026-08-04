@@ -8,6 +8,7 @@ from datetime import date, datetime
 import base64
 import os
 import io
+import zipfile
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib import colors
 from reportlab.lib.units import cm
@@ -59,11 +60,21 @@ st.markdown("""
         font-weight: 700 !important;
     }
     
-    /* Allow dataframes to wrap text in headers */
+    /* Allow dataframes to wrap text in headers and center align */
     [data-testid="stDataFrame"] th {
         white-space: normal !important;
         word-wrap: break-word !important;
+        text-align: center !important;
     }
+    [data-testid="stDataFrame"] td {
+        white-space: normal !important;
+        word-wrap: break-word !important;
+        text-align: center !important;
+    }
+    
+    table { text-align: center; }
+    th { text-align: center !important; }
+    td { text-align: center !important; }
     
     .badge-green  { background:#059669; color:#fff; padding:2px 10px; border-radius:12px; font-size:13px; font-weight:600; display:inline-block; }
     .badge-amber  { background:#d97706; color:#fff; padding:2px 10px; border-radius:12px; font-size:13px; font-weight:600; display:inline-block; }
@@ -214,6 +225,40 @@ def get_asset_eff_cagr(a):
         c = c * (1.0 - asset_tax_rate(a.get("asset_class", "Equity")))
     return c
 
+def display_styled_df(df, height=None):
+    if df.empty:
+        st.dataframe(df, hide_index=True, use_container_width=True, height=height)
+        return
+    styled = df.style.set_properties(**{
+        'text-align': 'center',
+        'white-space': 'normal',
+        'word-wrap': 'break-word'
+    }).set_table_styles([
+        dict(selector='th', props=[('text-align', 'center'), ('white-space', 'normal')])
+    ])
+    st.dataframe(styled, hide_index=True, use_container_width=True, height=height)
+
+def generate_all_tables_excel_bytes():
+    output = io.BytesIO()
+    try:
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            if st.session_state.income: pd.DataFrame(st.session_state.income).to_excel(writer, sheet_name="Income", index=False)
+            if st.session_state.expenses: pd.DataFrame(st.session_state.expenses).to_excel(writer, sheet_name="Expenses", index=False)
+            if st.session_state.goals: pd.DataFrame(st.session_state.goals).to_excel(writer, sheet_name="Goals", index=False)
+            if st.session_state.assets: pd.DataFrame(st.session_state.assets).to_excel(writer, sheet_name="Assets", index=False)
+            if st.session_state.liabilities: pd.DataFrame(st.session_state.liabilities).to_excel(writer, sheet_name="Liabilities", index=False)
+            if 'summary_df' in st.session_state: st.session_state['summary_df'].to_excel(writer, sheet_name="Goal Summary", index=False)
+    except Exception:
+        # Fallback if xlsxwriter not available
+        with zipfile.ZipFile(output, 'w') as zf:
+            if st.session_state.income: zf.writestr("Income.csv", pd.DataFrame(st.session_state.income).to_csv(index=False))
+            if st.session_state.expenses: zf.writestr("Expenses.csv", pd.DataFrame(st.session_state.expenses).to_csv(index=False))
+            if st.session_state.goals: zf.writestr("Goals.csv", pd.DataFrame(st.session_state.goals).to_csv(index=False))
+            if st.session_state.assets: zf.writestr("Assets.csv", pd.DataFrame(st.session_state.assets).to_csv(index=False))
+            if st.session_state.liabilities: zf.writestr("Liabilities.csv", pd.DataFrame(st.session_state.liabilities).to_csv(index=False))
+            if 'summary_df' in st.session_state: zf.writestr("Goal_Summary.csv", st.session_state['summary_df'].to_csv(index=False))
+    return output.getvalue()
+
 # ══════════════════════════════════════════════════════
 # VIRTUAL AUTO-SWEEP SURPLUS
 # ══════════════════════════════════════════════════════
@@ -341,7 +386,7 @@ for key, default in [
     ("income", []), ("expenses", []), ("goals", []), ("assets", []), ("liabilities", []),
     ("projection_years", 30), ("data_version", 0),
     ("ret_opening_corpus", 0), ("ret_goal_name", ""),
-    ("ret_annual_return", 9.0), ("ret_tax_class", "Equity"),
+    ("ret_annual_return", 0.0), ("ret_tax_class", "Equity"),
     ("ret_custom_tax", 20.0), ("ret_q_withdrawal", 0), ("ret_w_inflation", 7.0),
     ("proj_start_year", THIS_YEAR), ("proj_end_year", THIS_YEAR + 30),
     ("number_format", "Indian"), ("apply_tax_drag", False),
@@ -1410,7 +1455,24 @@ def generate_full_pdf_report():
     story = []
     chart_errors = []
 
-    story.append(Paragraph("Net Worth &amp; Goal Planner — Full Report", title_style))
+    story.append(Paragraph("📊 Net Worth &amp; Goal Planner", title_style))
+    story.append(Paragraph("Project your finances · Track goals · Allocate assets", sub_style))
+    story.append(Paragraph("Developed by Sandeep Narang", normal_style))
+    
+    logo_path = os.path.join(os.path.dirname(__file__), "shiftgaze_logo.jpg")
+    if os.path.exists(logo_path):
+        story.append(RLImage(logo_path, width=4*cm, height=4*cm))
+
+    story.append(Spacer(1, 14))
+    
+    disclaimer_text = "⚠️ <b>Disclaimer:</b> This calculator is for personal planning only and does not constitute financial advice. Projections are estimates — actual returns, inflation and tax may differ. Consult a qualified financial advisor before making investment decisions."
+    privacy_text = "🔒 <b>Privacy:</b> Your financial data — income, expenses, goals, and assets — never leaves your browser session. It is never stored, transmitted, or retained anywhere; it's lost when you close the tab unless you download it using the Save button below. The one exception: if you submit feedback below, only your rating and comment text are sent — nothing from your financial data."
+    
+    story.append(Paragraph(disclaimer_text, caption_style))
+    story.append(Spacer(1, 6))
+    story.append(Paragraph(privacy_text, caption_style))
+    story.append(Spacer(1, 14))
+
     story.append(Paragraph(f"Generated: {date.today().strftime('%d %b %Y')}", caption_style))
     story.append(Spacer(1, 14))
 
@@ -1946,128 +2008,14 @@ shortfall banner, and personalized recommendations.
 </div>
 """, unsafe_allow_html=True)
 
-fmt_toggle_cols = st.columns([1, 3])
-with fmt_toggle_cols[0]:
-    fmt_choice = st.radio(
-        "Number Format",
-        options=["Western (1,000,000)", "Indian (10,00,000)"],
-        index=0 if st.session_state.number_format == "Western" else 1,
-        horizontal=False,
-        key=f"v{_v}_number_format_radio",
-    )
-    st.session_state.number_format = "Western" if fmt_choice.startswith("Western") else "Indian"
-with fmt_toggle_cols[1]:
-    st.caption(
-        "Switches comma grouping and magnitude labels across every number in the app — "
-        "**Western**: 1,000,000 · Million/Billion. **Indian**: 10,00,000 · Lakh/Crore. "
-        "This is a display setting only; your entered values don't change."
-    )
-
-with st.expander("💾 Save & Load Your Data", expanded=False):
-    st.caption("Your data resets when you close this tab. Download to keep it safe.")
-    st.markdown('<div style="color: #ef4444; font-weight: bold; margin-bottom: 10px;">⚠️ Reminder: Please download your data before you end the session, as it will not be saved!</div>', unsafe_allow_html=True)
-    sc, lc, rc = st.columns(3)
-    with sc:
-        export_data = {
-            "income":st.session_state.income, "expenses":st.session_state.expenses,
-            "projection_years":st.session_state.projection_years,
-            "goals":st.session_state.goals, "assets":st.session_state.assets,
-            "liabilities": st.session_state.liabilities,
-            "ret_opening_corpus": st.session_state.get("ret_opening_corpus", 0),
-            "ret_goal_name":      st.session_state.get("ret_goal_name", ""),
-            "ret_annual_return":  st.session_state.get("ret_annual_return", 9.0),
-            "ret_tax_class":      st.session_state.get("ret_tax_class", "Equity"),
-            "ret_custom_tax":     st.session_state.get("ret_custom_tax", 20.0),
-            "ret_q_withdrawal":   st.session_state.get("ret_q_withdrawal", 0),
-            "ret_w_inflation":    st.session_state.get("ret_w_inflation", 7.0),
-            "apply_tax_drag":     st.session_state.get("apply_tax_drag", False),
-            "auto_sweep_surplus": st.session_state.get("auto_sweep_surplus", False),
-            "sweep_cagr":         st.session_state.get("sweep_cagr", 8.0),
-            "tax_rates":          {cls: st.session_state.get(f"tax_rate_{cls}", DEFAULT_TAX_RATES[cls]) for cls in ASSET_CLASSES}
-        }
-        st.download_button("⬇️ Download My Data", data=json.dumps(export_data, indent=2), file_name="financial_planner_data.json", mime="application/json", use_container_width=True)
-    with lc:
-        up = st.file_uploader("Load", type=["json"], label_visibility="collapsed")
-        if up:
-            try:
-                st.session_state["_pending_load"] = json.loads(up.read().decode())
-                st.success("✓ File read — ready to apply")
-            except Exception as e: st.error(str(e))
-        if st.session_state.get("_pending_load"):
-            if st.button("✅ Apply Loaded Data", use_container_width=True, type="primary"):
-                d = st.session_state.pop("_pending_load")
-                for k in ["income","expenses","goals","assets","liabilities","projection_years",
-                          "ret_opening_corpus","ret_goal_name","ret_annual_return",
-                          "ret_tax_class","ret_custom_tax","ret_q_withdrawal","ret_w_inflation", 
-                          "apply_tax_drag", "auto_sweep_surplus", "sweep_cagr"]:
-                    if k in d:
-                        if k == "liabilities" and isinstance(d[k], (int, float)):
-                            st.session_state[k] = []
-                        else:
-                            st.session_state[k] = d[k]
-                if "tax_rates" in d:
-                    for cls, rate in d["tax_rates"].items():
-                        st.session_state[f"tax_rate_{cls}"] = rate
-                clear_asset_cache()
-                st.session_state.data_version += 1
-                st.rerun()
-    with rc:
-        if st.button("🔄 Reset to Empty", use_container_width=True):
-            for k in ["income","expenses","goals","assets","liabilities"]: st.session_state[k] = []
-            st.session_state.projection_years = 30
-            st.session_state.ret_opening_corpus = 0
-            st.session_state.ret_goal_name      = ""
-            st.session_state.ret_annual_return  = 9.0
-            st.session_state.ret_tax_class      = "Equity"
-            st.session_state.ret_custom_tax     = 20.0
-            st.session_state.ret_q_withdrawal   = 0
-            st.session_state.ret_w_inflation    = 7.0
-            st.session_state.apply_tax_drag     = False
-            st.session_state.auto_sweep_surplus = False
-            st.session_state.sweep_cagr         = 8.0
-            for cls in ASSET_CLASSES:
-                st.session_state[f"tax_rate_{cls}"] = DEFAULT_TAX_RATES[cls]
-            clear_asset_cache()
-            st.session_state.data_version += 1
-            st.rerun()
-
-with st.expander("📄 Export All Tabs to PDF", expanded=False):
-    st.caption("Generates a single PDF covering Dashboard, Income & Expenses, Goals, Assets, Liabilities, and Retirement.")
-    st.markdown('<div style="color: #ef4444; font-weight: bold; margin-bottom: 10px;">⚠️ Reminder: Please download your PDF report before you end the session!</div>', unsafe_allow_html=True)
-    if st.button("📄 Generate PDF Report", use_container_width=True, type="primary"):
-        with st.spinner("Building PDF..."):
-            try:
-                pdf_bytes, chart_errors = generate_full_pdf_report()
-                st.session_state["_pdf_ready"] = pdf_bytes
-                st.session_state["_pdf_chart_errors"] = chart_errors
-                if chart_errors:
-                    st.warning(
-                        f"✓ Report ready, but {len(chart_errors)} chart(s) could not be rendered "
-                        f"(tables are unaffected — details below). Click below to download anyway."
-                    )
-                    with st.expander("Chart rendering errors", expanded=True):
-                        for name, err in chart_errors:
-                            st.caption(f"**{name}:** {err}")
-                else:
-                    st.success("✓ Report ready — click below to download")
-            except Exception as e:
-                st.error(f"Could not generate PDF: {e}")
-    if st.session_state.get("_pdf_ready"):
-        st.download_button(
-            "⬇️ Download PDF Report",
-            data=st.session_state["_pdf_ready"],
-            file_name=f"financial_planner_report_{THIS_YEAR}.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-        )
-
-tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_liab, tab_retire = st.tabs([
+tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_liab, tab_retire, tab_settings = st.tabs([
     "1. Dashboard", 
     "2. Income & Expenses", 
     "3. Goals", 
     "4. Assets", 
     "5. 💳 Liabilities", 
-    "6. 🏖️ Retirement"
+    "6. 🏖️ Retirement",
+    "7. ⚙️ Settings"
 ])
 
 # ══════════════════════════════════════════════════════
@@ -2338,7 +2286,16 @@ with tab_dash:
             "Recommendation":                    "—",
         })
 
-        st.table(pd.DataFrame(summary_rows))
+        summary_df = pd.DataFrame(summary_rows)
+        st.session_state['summary_df'] = summary_df
+        display_styled_df(summary_df)
+
+        st.download_button(
+            label="📥 Download Goal Summary Table (CSV)", 
+            data=summary_df.to_csv(index=False).encode('utf-8'), 
+            file_name='goal_summary.csv', 
+            mime='text/csv'
+        )
 
         zero_cagr_val = sum(a.get("value",0) for a in eff_assets if (a.get("cagr") or 0) == 0 and not a.get("is_virtual_surplus"))
         recurring_goals = [g for g in goal_projections() if goal_frequency(g) > 0]
@@ -2635,7 +2592,7 @@ with tab_inc_exp:
             
             table_data.append(row)
             
-        st.dataframe(table_data, width="stretch", hide_index=True)
+        display_styled_df(pd.DataFrame(table_data))
         
         st.markdown("---")
         st.markdown("### 🔄 Auto-Sweep Surplus")
@@ -2681,7 +2638,7 @@ with tab_inc_exp:
                             "Annual Surplus Swept": fmt_full(annual_surplus)
                         })
                 if surplus_rows:
-                    st.dataframe(surplus_rows, use_container_width=True, hide_index=True)
+                    display_styled_df(pd.DataFrame(surplus_rows))
                 else:
                     st.caption("No positive surplus or active income found in the projection period.")
             else:
@@ -2824,7 +2781,7 @@ with tab_goals:
                 "Total Cost":     fmt_full(tot_total_cost),
             })
             
-        st.dataframe(rows, width="stretch", hide_index=True)
+        display_styled_df(pd.DataFrame(rows))
 
     if get_effective_assets() and st.session_state.goals:
         st.markdown("### Class Mix Funding Each Goal")
@@ -2841,7 +2798,7 @@ with tab_goals:
             "Untagged assets are drawn from a shared pool and consumed sequentially. Unused assets are labeled as Surplus."
         )
 
-        st.dataframe(granular_rows, width="stretch", hide_index=True)
+        display_styled_df(pd.DataFrame(granular_rows))
 
 # ══════════════════════════════════════════════════════
 # ASSETS
@@ -2908,34 +2865,6 @@ with tab_assets:
     st.markdown("### 📈 Asset Portfolio")
     st.caption(f"Total Assets: {fmt_full(total_assets())} · Weighted CAGR: {weighted_cagr():.1f}%")
 
-    with st.expander("⚙️ Tax Configuration & Settings", expanded=False):
-        td_col1, td_col2 = st.columns([1, 2])
-        with td_col1:
-            apply_tax = st.toggle("Apply Automatic Tax Drag", value=st.session_state.apply_tax_drag, key=f"v{_v}_tax_drag_toggle")
-            if apply_tax != st.session_state.apply_tax_drag:
-                st.session_state.apply_tax_drag = apply_tax
-                clear_asset_cache()
-                st.rerun()
-        with td_col2:
-            st.caption("When enabled, the app automatically applies taxes to your Expected CAGRs, Maturity Amounts, and Retirement Drawdowns based on the asset class's standard LTCG tax rate below. If turned off, all tax impact is exactly 0.")
-
-        st.markdown("##### Custom Tax Rates by Class (%)")
-        tr_cols = st.columns(5)
-        
-        new_rates = {}
-        for i, cls in enumerate(ASSET_CLASSES):
-            with tr_cols[i]:
-                current_val = float(st.session_state.get(f"tax_rate_{cls}", DEFAULT_TAX_RATES.get(cls, 0.0)))
-                new_val = st.number_input(cls, value=current_val, min_value=0.0, max_value=99.0, step=0.5, key=f"v{_v}_tax_input_{cls}")
-                new_rates[cls] = new_val
-                
-        # Only rerun if a rate actually changed
-        if any(st.session_state.get(f"tax_rate_{cls}") != new_rates[cls] for cls in ASSET_CLASSES):
-            for cls in ASSET_CLASSES:
-                st.session_state[f"tax_rate_{cls}"] = new_rates[cls]
-            clear_asset_cache()
-            st.rerun()
-
     with st.expander("📥 Import Assets from Excel", expanded=False):
         st.caption(
             "Upload an .xlsx with columns: Asset Name, Asset Type, Class, Purchase Date, Invested Amount, "
@@ -2969,6 +2898,7 @@ with tab_assets:
     gnames = goal_names()
 
     assets_data = []
+    apply_tax = st.session_state.get("apply_tax_drag", False)
     for a in st.session_state.assets:
         row = {
             "Asset Name":       a.get("name", ""),
@@ -3201,7 +3131,7 @@ with tab_assets:
                 "20 Yrs":        fmt_full(portfolio_at_year(20)),
             })
             rows.append(tot_data)
-            st.dataframe(rows, width="stretch", hide_index=True)
+            display_styled_df(pd.DataFrame(rows))
 
 # ══════════════════════════════════════════════════════
 # LIABILITIES TAB
@@ -3294,7 +3224,7 @@ with tab_liab:
                 st.markdown(f"**Calculated Monthly EMI:** {fmt_full(emi)}")
                 sched, _ = generate_annual_amortization(l)
                 if sched:
-                    st.dataframe(sched, hide_index=True, use_container_width=True)
+                    display_styled_df(pd.DataFrame(sched))
                 else:
                     st.caption("No schedule generated (check principal/months).")
 
@@ -3340,9 +3270,16 @@ with tab_retire:
         start_cal_year = rel_to_cal(goal_year_rel)
         ai             = avg_inflation()
 
+        wcagr_pct = weighted_cagr()
         allocs = smart_allocation()
         selected_goal_alloc = next((g for g in allocs if g["name"] == selected_goal_name), None)
-        target_cost = selected_goal_alloc["display_cost"] if selected_goal_alloc else 0.0
+        
+        if selected_goal_alloc:
+            target_cost = selected_goal_alloc["display_cost"]
+            npv_of_cost = goal_npv(selected_goal_alloc, wcagr_pct)
+        else:
+            target_cost = 0.0
+            npv_of_cost = 0.0
 
         if tagged_assets:
             projected_corpus = sum(asset_value_at_year(a, goal_year_rel, ai) for a in tagged_assets)
@@ -3353,10 +3290,10 @@ with tab_retire:
             dominant_class   = "Equity"
             st.caption("No assets tagged to this goal.")
 
-        st.caption(f"🎯 The Target Cost required for this goal is **{fmt_full(target_cost)}**")
+        st.caption(f"🎯 The NPV for this goal is **{fmt_full(npv_of_cost)}** (Target Cost: {fmt_full(target_cost)})")
 
         saved_corpus = st.session_state.get("ret_opening_corpus", 0) or 0
-        default_corpus = int(saved_corpus) if saved_corpus > 0 else int(target_cost)
+        default_corpus = int(saved_corpus) if saved_corpus > 0 else int(npv_of_cost)
         opening_corpus = currency_input("Opening Corpus (at retirement)",
             default_corpus,
             key=f"v{_v}_ret_corpus")
@@ -3364,7 +3301,7 @@ with tab_retire:
         st.session_state.ret_opening_corpus = opening_corpus
 
         saved_return = st.session_state.get("ret_annual_return", 0.0) or 0.0
-        default_return = round(saved_return, 1) if saved_return > 0 else 9.0
+        default_return = round(saved_return, 1) if saved_return > 0 else round(wcagr_pct, 1)
         annual_return = st.number_input("Expected Annual Return %",
             value=default_return, min_value=0.0, max_value=30.0, step=0.5,
             key=f"v{_v}_ret_return")
@@ -3377,7 +3314,7 @@ with tab_retire:
 
         tax_rate_display = asset_tax_rate(asset_class_for_tax)
         if not st.session_state.get("apply_tax_drag"):
-            st.caption("LTCG tax rate: **0.0%** (Automatic Tax Drag is currently turned **OFF** in Assets tab)")
+            st.caption("LTCG tax rate: **0.0%** (Automatic Tax Drag is currently turned **OFF** in Assets/Settings tab)")
         else:
             st.caption(f"LTCG tax rate: **{tax_rate_display*100:.1f}%** (based on settings) — on gain portion only")
 
@@ -3427,7 +3364,7 @@ with tab_retire:
 > + Return on Remainder
 > = Closing Corpus
 
-**Tax rates:** Configured via your custom settings in the Assets tab.
+**Tax rates:** Configured via your custom settings in the Settings tab.
 
 Withdrawal inflates every year at your chosen rate.
         """)
@@ -3495,7 +3432,7 @@ Withdrawal inflates every year at your chosen rate.
                 "Net Gain (Q)":   fmt_full(round(tot_q_net_gain)),
                 "Closing Corpus": "",
             })
-            st.dataframe(display_rows, width="stretch", hide_index=True, height=450)
+            display_styled_df(pd.DataFrame(display_rows), height=450)
         else:
             annual = {}
             for r in rows:
@@ -3547,6 +3484,174 @@ Withdrawal inflates every year at your chosen rate.
                 "Closing Corpus":   "",
             })
             
-            st.dataframe(ann_rows, width="stretch", hide_index=True, height=450)
+            display_styled_df(pd.DataFrame(ann_rows), height=450)
 
         st.caption(f"Corpus depleted after {total_years:.1f} years · Withdrawn: {fmt_full(total_withdrawn)} · Tax: {fmt_full(total_tax)}")
+
+
+# ══════════════════════════════════════════════════════
+# SETTINGS TAB
+# ══════════════════════════════════════════════════════
+with tab_settings:
+    st.markdown("# 7. ⚙️ Settings")
+    st.markdown("### ⚙️ Global Configuration & Exports")
+    
+    fmt_toggle_cols = st.columns([1, 3])
+    with fmt_toggle_cols[0]:
+        fmt_choice = st.radio(
+            "Number Format",
+            options=["Western (1,000,000)", "Indian (10,00,000)"],
+            index=0 if st.session_state.number_format == "Western" else 1,
+            horizontal=False,
+            key=f"v{_v}_number_format_radio",
+        )
+        st.session_state.number_format = "Western" if fmt_choice.startswith("Western") else "Indian"
+    with fmt_toggle_cols[1]:
+        st.caption(
+            "Switches comma grouping and magnitude labels across every number in the app — "
+            "**Western**: 1,000,000 · Million/Billion. **Indian**: 10,00,000 · Lakh/Crore. "
+            "This is a display setting only; your entered values don't change."
+        )
+
+    with st.expander("⚙️ Tax Configuration & Settings", expanded=False):
+        td_col1, td_col2 = st.columns([1, 2])
+        with td_col1:
+            apply_tax = st.toggle("Apply Automatic Tax Drag", value=st.session_state.apply_tax_drag, key=f"v{_v}_tax_drag_toggle")
+            if apply_tax != st.session_state.apply_tax_drag:
+                st.session_state.apply_tax_drag = apply_tax
+                clear_asset_cache()
+                st.rerun()
+        with td_col2:
+            st.caption("When enabled, the app automatically applies taxes to your Expected CAGRs, Maturity Amounts, and Retirement Drawdowns based on the asset class's standard LTCG tax rate below. If turned off, all tax impact is exactly 0.")
+
+        st.markdown("##### Custom Tax Rates by Class (%)")
+        tr_cols = st.columns(5)
+        
+        new_rates = {}
+        for i, cls in enumerate(ASSET_CLASSES):
+            with tr_cols[i]:
+                current_val = float(st.session_state.get(f"tax_rate_{cls}", DEFAULT_TAX_RATES.get(cls, 0.0)))
+                new_val = st.number_input(cls, value=current_val, min_value=0.0, max_value=99.0, step=0.5, key=f"v{_v}_tax_input_{cls}")
+                new_rates[cls] = new_val
+                
+        # Only rerun if a rate actually changed
+        if any(st.session_state.get(f"tax_rate_{cls}") != new_rates[cls] for cls in ASSET_CLASSES):
+            for cls in ASSET_CLASSES:
+                st.session_state[f"tax_rate_{cls}"] = new_rates[cls]
+            clear_asset_cache()
+            st.rerun()
+
+    with st.expander("💾 Save & Load Your Data", expanded=False):
+        st.caption("Your data resets when you close this tab. Download to keep it safe.")
+        st.markdown('<div style="color: #ef4444; font-weight: bold; margin-bottom: 10px;">⚠️ Reminder: Please download your data before you end the session, as it will not be saved!</div>', unsafe_allow_html=True)
+        sc, lc, rc = st.columns(3)
+        with sc:
+            export_data = {
+                "income":st.session_state.income, "expenses":st.session_state.expenses,
+                "projection_years":st.session_state.projection_years,
+                "goals":st.session_state.goals, "assets":st.session_state.assets,
+                "liabilities": st.session_state.liabilities,
+                "ret_opening_corpus": st.session_state.get("ret_opening_corpus", 0),
+                "ret_goal_name":      st.session_state.get("ret_goal_name", ""),
+                "ret_annual_return":  st.session_state.get("ret_annual_return", 9.0),
+                "ret_tax_class":      st.session_state.get("ret_tax_class", "Equity"),
+                "ret_custom_tax":     st.session_state.get("ret_custom_tax", 20.0),
+                "ret_q_withdrawal":   st.session_state.get("ret_q_withdrawal", 0),
+                "ret_w_inflation":    st.session_state.get("ret_w_inflation", 7.0),
+                "apply_tax_drag":     st.session_state.get("apply_tax_drag", False),
+                "auto_sweep_surplus": st.session_state.get("auto_sweep_surplus", False),
+                "sweep_cagr":         st.session_state.get("sweep_cagr", 8.0),
+                "tax_rates":          {cls: st.session_state.get(f"tax_rate_{cls}", DEFAULT_TAX_RATES[cls]) for cls in ASSET_CLASSES}
+            }
+            st.download_button("⬇️ Download JSON Save File", data=json.dumps(export_data, indent=2), file_name="financial_planner_data.json", mime="application/json", use_container_width=True)
+        with lc:
+            up = st.file_uploader("Load JSON Data", type=["json"], label_visibility="collapsed")
+            if up:
+                try:
+                    st.session_state["_pending_load"] = json.loads(up.read().decode())
+                    st.success("✓ File read — ready to apply")
+                except Exception as e: st.error(str(e))
+            if st.session_state.get("_pending_load"):
+                if st.button("✅ Apply Loaded Data", use_container_width=True, type="primary"):
+                    d = st.session_state.pop("_pending_load")
+                    for k in ["income","expenses","goals","assets","liabilities","projection_years",
+                              "ret_opening_corpus","ret_goal_name","ret_annual_return",
+                              "ret_tax_class","ret_custom_tax","ret_q_withdrawal","ret_w_inflation", 
+                              "apply_tax_drag", "auto_sweep_surplus", "sweep_cagr"]:
+                        if k in d:
+                            if k == "liabilities" and isinstance(d[k], (int, float)):
+                                st.session_state[k] = []
+                            else:
+                                st.session_state[k] = d[k]
+                    if "tax_rates" in d:
+                        for cls, rate in d["tax_rates"].items():
+                            st.session_state[f"tax_rate_{cls}"] = rate
+                    clear_asset_cache()
+                    st.session_state.data_version += 1
+                    st.rerun()
+        with rc:
+            if st.button("🔄 Reset to Empty", use_container_width=True):
+                for k in ["income","expenses","goals","assets","liabilities"]: st.session_state[k] = []
+                st.session_state.projection_years = 30
+                st.session_state.ret_opening_corpus = 0
+                st.session_state.ret_goal_name      = ""
+                st.session_state.ret_annual_return  = 9.0
+                st.session_state.ret_tax_class      = "Equity"
+                st.session_state.ret_custom_tax     = 20.0
+                st.session_state.ret_q_withdrawal   = 0
+                st.session_state.ret_w_inflation    = 7.0
+                st.session_state.apply_tax_drag     = False
+                st.session_state.auto_sweep_surplus = False
+                st.session_state.sweep_cagr         = 8.0
+                for cls in ASSET_CLASSES:
+                    st.session_state[f"tax_rate_{cls}"] = DEFAULT_TAX_RATES[cls]
+                clear_asset_cache()
+                st.session_state.data_version += 1
+                st.rerun()
+
+    with st.expander("📄 Export All Tabs to PDF", expanded=False):
+        st.caption("Generates a single PDF covering Dashboard, Income & Expenses, Goals, Assets, Liabilities, and Retirement.")
+        st.markdown('<div style="color: #ef4444; font-weight: bold; margin-bottom: 10px;">⚠️ Reminder: Please download your PDF report before you end the session!</div>', unsafe_allow_html=True)
+        if st.button("📄 Generate PDF Report", use_container_width=True, type="primary"):
+            with st.spinner("Building PDF..."):
+                try:
+                    pdf_bytes, chart_errors = generate_full_pdf_report()
+                    st.session_state["_pdf_ready"] = pdf_bytes
+                    st.session_state["_pdf_chart_errors"] = chart_errors
+                    if chart_errors:
+                        st.warning(
+                            f"✓ Report ready, but {len(chart_errors)} chart(s) could not be rendered "
+                            f"(tables are unaffected — details below). Click below to download anyway."
+                        )
+                        with st.expander("Chart rendering errors", expanded=True):
+                            for name, err in chart_errors:
+                                st.caption(f"**{name}:** {err}")
+                    else:
+                        st.success("✓ Report ready — click below to download")
+                except Exception as e:
+                    st.error(f"Could not generate PDF: {e}")
+        if st.session_state.get("_pdf_ready"):
+            st.download_button(
+                "⬇️ Download PDF Report",
+                data=st.session_state["_pdf_ready"],
+                file_name=f"financial_planner_report_{THIS_YEAR}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
+
+    with st.expander("📥 Download All Tables to Excel", expanded=False):
+        st.caption("Download all your active inputs and summary tables into a single multi-sheet Excel file or ZIP.")
+        if st.button("📦 Prepare Tables Download", use_container_width=True):
+            with st.spinner("Compiling tables..."):
+                table_bytes = generate_all_tables_excel_bytes()
+                st.session_state["_excel_ready"] = table_bytes
+                st.success("✓ Data compiled — click below to download")
+
+        if st.session_state.get("_excel_ready"):
+            st.download_button(
+                "⬇️ Download All Tables",
+                data=st.session_state["_excel_ready"],
+                file_name=f"financial_planner_tables_{THIS_YEAR}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
