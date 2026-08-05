@@ -2310,23 +2310,25 @@ with tab_dash:
     annual_exp = total_monthly_expense() * 12
     annual_sur = monthly_surplus() * 12
 
-    # PREPARE CONSOLIDATED METRICS
-    ten_yr_proj = fmt(max(portfolio_at_year(10) - liabilities_at_year(10), 0))
-    wcagr_val   = f"{weighted_cagr():.1f}%"
-    risk_prof   = risk_profile()
-    
     tot_alloc = sum(g["allocated"] for g in alloc_list)
     tot_cost  = sum(g["display_cost"] for g in alloc_list)
     funding_ratio = (tot_alloc / tot_cost * 100) if tot_cost > 0 else 0
     
+    # Calculate surplus and deficit upfront for the dashboard tile
+    surplus_today = calculate_surplus_today()
+    total_gap = sum(max(g.get("display_cost", 0) - g.get("allocated", 0), 0) for g in alloc_list)
+    
     if total_goals == 0:
         status_emoji, status_text = "⚪", "No Goals"
     elif fully_funded == total_goals:
-        status_emoji, status_text = "😊", "All Met!"
+        if surplus_today > 0:
+            status_emoji, status_text = "😊", f"All Met! (+{fmt(surplus_today)})"
+        else:
+            status_emoji, status_text = "😊", "All Met!"
     elif funding_ratio >= 75 or fully_funded > 0:
-        status_emoji, status_text = "😐", "Nearly Met"
+        status_emoji, status_text = "😐", f"Nearly Met (-{fmt(total_gap)})"
     else:
-        status_emoji, status_text = "😟", "Not Met"
+        status_emoji, status_text = "😟", f"Not Met (-{fmt(total_gap)})"
 
     # HTML TILE GENERATOR (Single-line to prevent markdown parsing errors)
     def make_tile(title, value, subtitle=""):
