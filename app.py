@@ -249,46 +249,161 @@ def display_styled_df(df, height=None):
     
     st.dataframe(styled, **kwargs)
 
-def prepare_df_for_export(data_list, default_cols):
-    """Deep cleans dataframes for Excel to prevent file corruption from nested objects/formulas."""
-    if not data_list:
-        return pd.DataFrame(columns=default_cols)
-    df = pd.DataFrame(data_list)
-    for col in df.columns:
-        # Safely convert lists (like tagged_goals) to string representation
-        df[col] = df[col].apply(lambda x: ", ".join(map(str, x)) if isinstance(x, (list, tuple, set)) else x)
-        # Prevent Excel formula injection which can corrupt the file
-        df[col] = df[col].apply(lambda x: f"'{x}" if isinstance(x, str) and x.startswith(("=", "+", "-", "@")) else x)
-    return df
-
 def generate_all_tables_excel_bytes():
     output = io.BytesIO()
     try:
-        # Default pandas writer handles standard environments cleanly without strict engine dictation
         with pd.ExcelWriter(output) as writer:
-            df_inc = prepare_df_for_export(st.session_state.income, ["name", "monthly", "growth", "start_year", "end_year"])
-            df_inc.to_excel(writer, sheet_name="Income", index=False)
+            # 1. Income Table
+            inc_data = [{
+                "Source": i.get("name", ""),
+                "Monthly": i.get("monthly", 0),
+                "Growth %/yr": i.get("growth", 5.0),
+                "Start Year": i.get("start_year", THIS_YEAR),
+                "End Year": i.get("end_year", THIS_YEAR+30)
+            } for i in st.session_state.income]
+            inc_df = pd.DataFrame(inc_data)
+            if inc_df.empty:
+                inc_df = pd.DataFrame(columns=["Source", "Monthly", "Growth %/yr", "Start Year", "End Year"])
+            inc_df.to_excel(writer, sheet_name="Income", index=False)
             
-            df_exp = prepare_df_for_export(st.session_state.expenses, ["name", "monthly", "inflation", "start_year", "end_year"])
-            df_exp.to_excel(writer, sheet_name="Expenses", index=False)
+            # 2. Expenses Table
+            exp_data = [{
+                "Name": e.get("name", ""),
+                "Monthly": e.get("monthly", 0),
+                "Inflation %": e.get("inflation", 6.0),
+                "Start Year": e.get("start_year", THIS_YEAR),
+                "End Year": e.get("end_year", THIS_YEAR+30)
+            } for e in st.session_state.expenses]
+            exp_df = pd.DataFrame(exp_data)
+            if exp_df.empty:
+                exp_df = pd.DataFrame(columns=["Name", "Monthly", "Inflation %", "Start Year", "End Year"])
+            exp_df.to_excel(writer, sheet_name="Expenses", index=False)
             
-            df_goals = prepare_df_for_export(st.session_state.goals, ["name", "current_cost", "inflation", "start_year", "end_year", "frequency"])
-            df_goals.to_excel(writer, sheet_name="Goals", index=False)
+            # 3. Goals Table
+            goal_data = [{
+                "Goal Name": g.get("name", ""),
+                "Cost Today": g.get("current_cost", 0),
+                "Inflation %": g.get("inflation", 6.0),
+                "Start Year": g.get("start_year", THIS_YEAR+5),
+                "End Year": g.get("end_year", THIS_YEAR+5),
+                "Frequency (yrs)": g.get("frequency", 0)
+            } for g in st.session_state.goals]
+            goal_df = pd.DataFrame(goal_data)
+            if goal_df.empty:
+                goal_df = pd.DataFrame(columns=["Goal Name", "Cost Today", "Inflation %", "Start Year", "End Year", "Frequency (yrs)"])
+            goal_df.to_excel(writer, sheet_name="Goals", index=False)
             
-            df_assets = prepare_df_for_export(st.session_state.assets, ["name", "asset_type", "asset_class", "purchase_date", "invested", "value", "maturity_amt", "maturity_date", "cagr", "tagged_goals", "swp_monthly", "swp_start_year"])
-            df_assets.to_excel(writer, sheet_name="Assets", index=False)
+            # 4. Assets Summary Table
+            eff_assets = get_effective_assets()
+            ai = avg_inflation()
+            apply_tax = st.session_state.get("apply_tax_drag", False)
+            asset_rows = []
+            for a in eff_assets:
+                row = {
+                    "Asset Name": a.get("name", ""),
+                    "Asset Type": a.get("asset_type", ""),
+                    "Class": a.get("asset_class", "Equity"),
+                    "Purch Date": a.get("purchase_date", ""),
+                    "Invested": a.get("invested", 0),
+                    "Cur Val": a.get("value", 0),
+                    "Mat Amt": a.get("maturity_amt", 0),
+                    "Mat Date": a.get("maturity_date", ""),
+                    "Gross CAGR %": a.get("cagr", 0.0)
+                }
+                if apply_tax:
+                    row["Tax %"] = asset_tax_rate(a["asset_class"]) * 100
+                    row["Net CAGR %"] = get_asset_eff_cagr(a)
+                row["Tag Goal"] = ", ".join(a.get("tagged_goals") or [])
+                row["SWP /mo"] = a.get("swp_monthly", 0)
+                row["SWP Yr"] = asset_swp_start_display(a)
+                row["5 Yrs"] = asset_value_at_year(a, 5, ai)
+                row["10 Yrs"] = asset_value_at_year(a, 10, ai)
+                row["20 Yrs"] = asset_value_at_year(a, 20, ai)
+                asset_rows.append(row)
+            asset_df = pd.DataFrame(asset_rows)
+            if asset_df.empty:
+                cols = ["Asset Name", "Asset Type", "Class", "Purch Date", "Invested", "Cur Val", "Mat Amt", "Mat Date", "Gross CAGR %"]
+                if apply_tax: cols.extend(["Tax %", "Net CAGR %"])
+                cols.extend(["Tag Goal", "SWP /mo", "SWP Yr", "5 Yrs", "10 Yrs", "20 Yrs"])
+                asset_df = pd.DataFrame(columns=cols)
+            asset_df.to_excel(writer, sheet_name="Assets Summary", index=False)
             
-            df_liab = prepare_df_for_export(st.session_state.liabilities, ["name", "principal", "rate", "months"])
-            df_liab.to_excel(writer, sheet_name="Liabilities", index=False)
+            # 5. Liabilities Table
+            liab_data = [{
+                "Loan Name": l.get("name", ""),
+                "Outstanding Principal": l.get("principal", 0),
+                "Interest Rate %": l.get("rate", 8.0),
+                "Remaining Months": l.get("months", 12)
+            } for l in st.session_state.liabilities]
+            liab_df = pd.DataFrame(liab_data)
+            if liab_df.empty:
+                liab_df = pd.DataFrame(columns=["Loan Name", "Outstanding Principal", "Interest Rate %", "Remaining Months"])
+            liab_df.to_excel(writer, sheet_name="Liabilities", index=False)
             
-            if 'summary_df' in st.session_state and not st.session_state['summary_df'].empty:
-                df_sum = st.session_state['summary_df'].copy()
-                for col in df_sum.columns:
-                    df_sum[col] = df_sum[col].apply(lambda x: ", ".join(map(str, x)) if isinstance(x, (list, tuple, set)) else str(x) if isinstance(x, dict) else x)
-                df_sum.to_excel(writer, sheet_name="Goal Summary", index=False)
-            else:
-                pd.DataFrame(columns=["Goal","Start","End","Cumulative Cost","Target Cost (Used)","Net Present Value","Allocated from Current Corpus","% Met","Status","Current Add'l Contribution Required","Recommendation"]).to_excel(writer, sheet_name="Goal Summary", index=False)
+            # 6. Calculated Goal Summary
+            alloc_list = smart_allocation()
+            wcagr_pct = weighted_cagr()
+            summary_rows = []
+            for alloc in alloc_list:
+                gap = max(alloc["display_cost"] - alloc["allocated"], 0)
+                years_left = max(goal_start_year(alloc), 1)
+                wc = wcagr_pct / 100
+                annual_contrib = gap * wc / ((1 + wc) ** years_left - 1) if wc > 0 and ((1 + wc) ** years_left - 1) > 0 else gap / years_left if years_left > 0 else gap
+                summary_rows.append({
+                    "Goal": alloc.get("name", ""),
+                    "Start": alloc.get("start_year", ""),
+                    "End": alloc.get("end_year", ""),
+                    "Cumulative Cost": alloc.get("cumulative_cost", 0),
+                    "Target Cost (Used)": alloc.get("display_cost", 0),
+                    "Net Present Value": goal_npv(alloc, wcagr_pct),
+                    "Allocated from Current Corpus": alloc.get("allocated_today", 0),
+                    "% Met": alloc.get("pct", 0),
+                    "Status": alloc.get("status", ""),
+                    "Current Add'l Contribution Required": annual_contrib if gap > 0 else 0
+                })
+            sum_df = pd.DataFrame(summary_rows)
+            if sum_df.empty:
+                sum_df = pd.DataFrame(columns=["Goal", "Start", "End", "Cumulative Cost", "Target Cost (Used)", "Net Present Value", "Allocated from Current Corpus", "% Met", "Status", "Current Add'l Contribution Required"])
+            sum_df.to_excel(writer, sheet_name="Goal Summary", index=False)
+
+            # 7. Corpus Composition (Hierarchical)
+            granular_rows = compute_granular_asset_allocation()
+            hierarchical_rows = []
+            if granular_rows:
+                grouped_data = {}
+                for r in granular_rows:
+                    g = r.get("Goal", "")
+                    if g == "TOTAL": 
+                        continue
+                    if g not in grouped_data:
+                        grouped_data[g] = []
+                    grouped_data[g].append(r)
+                
+                for goal, items in grouped_data.items():
+                    goal_total = sum(parse_amount(r.get("How much of the Asset in Asset Name column is allocated", "0")) for r in items)
+                    hierarchical_rows.append({
+                        "Row Labels": f"⊝ {goal}",
+                        "Asset Type": "",
+                        "Asset Class": "",
+                        "Allocated Amount": goal_total,
+                        "% of Goal's current Funding": ""
+                    })
+                    for item in items:
+                        hierarchical_rows.append({
+                            "Row Labels": f"      {item.get('Asset Name', '')}",
+                            "Asset Type": item.get("Asset Type", ""),
+                            "Asset Class": item.get("Asset Class", ""),
+                            "Allocated Amount": parse_amount(item.get("How much of the Asset in Asset Name column is allocated", "0")),
+                            "% of Goal's current Funding": float(str(item.get("% of the Goal's Current Funding", "0")).replace("%", "")) if str(item.get("% of the Goal's Current Funding", "")).replace("%", "").replace(".", "").isdigit() else 0.0
+                        })
+            
+            df_hierarchical = pd.DataFrame(hierarchical_rows, columns=["Row Labels", "Asset Type", "Asset Class", "Allocated Amount", "% of Goal's current Funding"])
+            if df_hierarchical.empty:
+                df_hierarchical = pd.DataFrame(columns=["Row Labels", "Asset Type", "Asset Class", "Allocated Amount", "% of Goal's current Funding"])
+            df_hierarchical.to_excel(writer, sheet_name="Corpus Composition", index=False)
+
         return output.getvalue(), "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    
     except Exception:
         # Fallback if no valid Excel writer is installed on the host
         output = io.BytesIO()
@@ -296,13 +411,8 @@ def generate_all_tables_excel_bytes():
             if st.session_state.income: zf.writestr("Income.csv", pd.DataFrame(st.session_state.income).to_csv(index=False))
             if st.session_state.expenses: zf.writestr("Expenses.csv", pd.DataFrame(st.session_state.expenses).to_csv(index=False))
             if st.session_state.goals: zf.writestr("Goals.csv", pd.DataFrame(st.session_state.goals).to_csv(index=False))
-            
-            df_assets = prepare_df_for_export(st.session_state.assets, [])
-            if not df_assets.empty: zf.writestr("Assets.csv", df_assets.to_csv(index=False))
-                
+            if st.session_state.assets: zf.writestr("Assets.csv", pd.DataFrame(st.session_state.assets).to_csv(index=False))
             if st.session_state.liabilities: zf.writestr("Liabilities.csv", pd.DataFrame(st.session_state.liabilities).to_csv(index=False))
-            if 'summary_df' in st.session_state and not st.session_state['summary_df'].empty: 
-                zf.writestr("Goal_Summary.csv", st.session_state['summary_df'].to_csv(index=False))
         return output.getvalue(), "zip", "application/zip"
 
 # ══════════════════════════════════════════════════════
@@ -345,7 +455,7 @@ def get_effective_assets():
     assets = list(st.session_state.assets)
     if st.session_state.get("auto_sweep_surplus", False):
         assets.append({
-            "name": "Unallocated Cash",
+            "name": "🔮 Future Swept Cash (Auto-Sweep)",
             "asset_type": "Auto-Sweep Surplus",
             "asset_class": "Debt",
             "purchase_date": str(TODAY),
@@ -806,7 +916,15 @@ def compute_granular_asset_allocation():
                         remaining_need -= draw
                         
                         val_today = a.get("value", 0) if not a.get("is_virtual_surplus") else 0
+                        
+                        # Fix for capturing Future Swept Cash
+                        if a.get("is_virtual_surplus"):
+                            val_today = draw 
+
                         draw_today = val_today * frac_used
+                        if a.get("is_virtual_surplus"):
+                            draw_today = draw
+
                         tot_allocated_all += draw_today
                         
                         table_rows.append({
@@ -2356,22 +2474,32 @@ with tab_dash:
         sub_html = f'<div style="color:#64748b; font-size:14px; margin-top:4px; text-align:center;">{subtitle}</div>' if subtitle else ""
         return f'<div style="background:#1e293b; border-radius:10px; padding:16px 20px; border:1px solid #334155; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;"><div style="color:#94a3b8; font-size:16px; font-weight:600; margin-bottom:4px;">{title}</div><div style="color:#fff; font-size:30px; font-weight:700;">{value}</div>{sub_html}</div>'
 
-    # STRICT 4-COLUMN GRID (12 Tiles = 3 Rows of 4)
+    # STRICT 4-COLUMN GRID
     dash_html = '<div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:14px; margin-bottom:24px;">'
     dash_html += make_tile("Total Assets", fmt(total_assets()))
     dash_html += make_tile("Total Liabilities", fmt(total_liabilities()))
     dash_html += make_tile("Total Net Worth", fmt(total_net_worth()))
-    dash_html += make_tile("10-Year Projection", ten_yr_proj)
+    dash_html += make_tile("10-Year Net Worth Projection", ten_yr_proj)
     
     dash_html += make_tile(f"Annual Income (Yr {eval_yr})", fmt(annual_inc))
     dash_html += make_tile(f"Annual Expenses (Yr {eval_yr})", fmt(annual_exp))
     dash_html += make_tile(f"Annual Surplus (Yr {eval_yr})", fmt(annual_sur))
-    dash_html += make_tile("Weighted CAGR", wcagr_val)
     
+    if st.session_state.get("auto_sweep_surplus", False):
+        ten_yr_swept = swept_surplus_at_year(10, st.session_state.get("sweep_cagr", 8.0))
+        dash_html += make_tile("10-Yr Swept Cash (Future)", fmt(ten_yr_swept))
+    else:
+        dash_html += make_tile("Weighted CAGR", wcagr_val)
+        
     dash_html += make_tile("Goals Fully Funded", goals_met_str)
     dash_html += make_tile("Retirement Corpus Funded", ret_funded_str)
-    dash_html += make_tile("Risk Profile", risk_prof)
     dash_html += make_tile("Goal Status", status_emoji, status_text)
+    
+    if st.session_state.get("auto_sweep_surplus", False):
+        dash_html += make_tile("Weighted CAGR", wcagr_val)
+    else:
+        dash_html += make_tile("Risk Profile", risk_prof)
+        
     dash_html += '</div>'
     
     st.markdown(dash_html, unsafe_allow_html=True)
@@ -2674,7 +2802,6 @@ with tab_dash:
                 st.code(str(e))
         st.session_state.setdefault("_feedback_log", []).append(feedback_payload)
 
-    # Export to PDF Moved to the Bottom of Dashboard 
     st.markdown("---")
     st.markdown("### 📄 Export All Tabs to PDF")
     st.caption("Generates a single PDF covering Dashboard, Income & Expenses, Goals, Assets, Liabilities, and Retirement.")
@@ -3128,7 +3255,6 @@ with tab_goals:
             "Values are displayed in **today's money**. Untagged assets are drawn from a shared pool and consumed sequentially."
         )
 
-        # 1. Group the existing granular_rows by Goal (excluding the overall TOTAL row)
         grouped_data = {}
         for r in granular_rows:
             g = r.get("Goal", "")
@@ -3140,12 +3266,9 @@ with tab_goals:
 
         hierarchical_rows = []
         
-        # 2. Build the hierarchical table row-by-row
         for goal, items in grouped_data.items():
-            # Sum the allocated amount for the Goal header row
             goal_total = sum(parse_amount(r.get("How much of the Asset in Asset Name column is allocated", "0")) for r in items)
             
-            # Add Goal Row (Parent)
             hierarchical_rows.append({
                 "Row Labels": f"⊝ {goal}",
                 "Asset Type": "",
@@ -3154,18 +3277,16 @@ with tab_goals:
                 "% of Goal's current Funding": ""
             })
             
-            # Add Asset Rows underneath (Children)
             for item in items:
                 asset_name = item.get("Asset Name", "")
                 hierarchical_rows.append({
-                    "Row Labels": f"      {asset_name}",  # Indented to mimic Excel hierarchy
+                    "Row Labels": f"      {asset_name}",
                     "Asset Type": item.get("Asset Type", ""),
                     "Asset Class": item.get("Asset Class", ""),
                     "Allocated Amount": item.get("How much of the Asset in Asset Name column is allocated", "0"),
                     "% of Goal's current Funding": item.get("% of the Goal's Current Funding", "")
                 })
 
-        # 3. Create DataFrame with the exact requested column sequence (1, 2, 3, 4, 5)
         df_hierarchical = pd.DataFrame(hierarchical_rows, columns=[
             "Row Labels", 
             "Asset Type", 
@@ -3174,7 +3295,6 @@ with tab_goals:
             "% of Goal's current Funding"
         ])
 
-        # 4. Style the dataframe so Streamlit respects the left-aligned spaces for the hierarchy
         styled_hierarchical = df_hierarchical.style.set_properties(
             subset=['Row Labels'], **{'text-align': 'left', 'white-space': 'pre'}
         ).set_properties(
