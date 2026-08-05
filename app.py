@@ -3129,7 +3129,52 @@ with tab_goals:
             "Untagged assets are drawn from a shared pool and consumed sequentially. Unused assets are labeled as Surplus."
         )
 
-        display_styled_df(pd.DataFrame(granular_rows))
+        fig_comp = go.Figure()
+        
+        # Extract ordered goals (excluding the summary TOTAL row)
+        ordered_goals = []
+        for r in granular_rows:
+            g = r.get("Goal", "")
+            if g != "TOTAL" and g not in ordered_goals:
+                ordered_goals.append(g)
+        
+        # Extract unique assets (excluding unfunded placeholders or empty strings)
+        asset_names = []
+        for r in granular_rows:
+            a = r.get("Asset Name", "")
+            g = r.get("Goal", "")
+            if g != "TOTAL" and a not in ["— None (Unfunded) —", ""] and a not in asset_names:
+                asset_names.append(a)
+        
+        # Add a bar trace for each asset
+        for asset in asset_names:
+            y_values = []
+            for g in ordered_goals:
+                # Retrieve and parse the formatted amount string back to a float
+                val = sum(parse_amount(r.get("How much of the Asset in Asset Name column is allocated", "0")) 
+                          for r in granular_rows if r.get("Goal") == g and r.get("Asset Name") == asset)
+                y_values.append(val)
+            
+            # Only add the trace if this asset has funds allocated somewhere
+            if sum(y_values) > 0:
+                fig_comp.add_trace(go.Bar(
+                    name=asset,
+                    x=ordered_goals,
+                    y=y_values,
+                    hovertemplate="<b>%{x}</b><br>" + asset + ": %{y:,.0f}<extra></extra>"
+                ))
+        
+        fig_comp.update_layout(
+            barmode='stack',
+            xaxis_title="Goals",
+            yaxis_title="Allocated Amount",
+            height=max(450, len(ordered_goals) * 20 + 250),
+            template=None,
+            legend=dict(orientation="h", y=-0.2),
+            margin=dict(l=60, r=20, t=30, b=20)
+        )
+        
+        st.plotly_chart(fig_comp, use_container_width=True)
 
 # ══════════════════════════════════════════════════════
 # ASSETS
