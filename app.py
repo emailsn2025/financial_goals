@@ -2329,6 +2329,14 @@ with tab_dash:
     surplus_today = calculate_surplus_today()
     total_gap = sum(max(g.get("display_cost", 0) - g.get("allocated", 0), 0) for g in alloc_list)
     
+    tot_alloc = sum(g["allocated"] for g in alloc_list)
+    tot_cost  = sum(g["display_cost"] for g in alloc_list)
+    funding_ratio = (tot_alloc / tot_cost * 100) if tot_cost > 0 else 0
+    
+    # Calculate surplus and deficit upfront for the dashboard tile
+    surplus_today = calculate_surplus_today()
+    total_gap = sum(max(g.get("display_cost", 0) - g.get("allocated", 0), 0) for g in alloc_list)
+    
     if total_goals == 0:
         status_emoji, status_text = "⚪", "No Goals"
     elif fully_funded == total_goals:
@@ -2336,7 +2344,7 @@ with tab_dash:
             status_emoji, status_text = "😊", f"All Met! (+{fmt(surplus_today)})"
         else:
             status_emoji, status_text = "😊", "All Met!"
-    elif funding_ratio >= 75 or fully_funded > 0:
+    elif funding_ratio >= 85:
         status_emoji, status_text = "😐", f"Nearly Met (-{fmt(total_gap)})"
     else:
         status_emoji, status_text = "😟", f"Not Met (-{fmt(total_gap)})"
