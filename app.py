@@ -249,47 +249,61 @@ def display_styled_df(df, height=None):
     
     st.dataframe(styled, **kwargs)
 
+def prepare_df_for_export(data_list, default_cols):
+    """Deep cleans dataframes for Excel to prevent file corruption from nested objects/formulas."""
+    if not data_list:
+        return pd.DataFrame(columns=default_cols)
+    df = pd.DataFrame(data_list)
+    for col in df.columns:
+        # Safely convert lists (like tagged_goals) to string representation
+        df[col] = df[col].apply(lambda x: ", ".join(map(str, x)) if isinstance(x, (list, tuple, set)) else x)
+        # Prevent Excel formula injection which can corrupt the file
+        df[col] = df[col].apply(lambda x: f"'{x}" if isinstance(x, str) and x.startswith(("=", "+", "-", "@")) else x)
+    return df
+
 def generate_all_tables_excel_bytes():
     output = io.BytesIO()
     try:
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_inc = pd.DataFrame(st.session_state.income) if st.session_state.income else pd.DataFrame(columns=["name", "monthly", "growth", "start_year", "end_year"])
+        # Default pandas writer handles standard environments cleanly without strict engine dictation
+        with pd.ExcelWriter(output) as writer:
+            df_inc = prepare_df_for_export(st.session_state.income, ["name", "monthly", "growth", "start_year", "end_year"])
             df_inc.to_excel(writer, sheet_name="Income", index=False)
             
-            df_exp = pd.DataFrame(st.session_state.expenses) if st.session_state.expenses else pd.DataFrame(columns=["name", "monthly", "inflation", "start_year", "end_year"])
+            df_exp = prepare_df_for_export(st.session_state.expenses, ["name", "monthly", "inflation", "start_year", "end_year"])
             df_exp.to_excel(writer, sheet_name="Expenses", index=False)
             
-            df_goals = pd.DataFrame(st.session_state.goals) if st.session_state.goals else pd.DataFrame(columns=["name", "current_cost", "inflation", "start_year", "end_year", "frequency"])
+            df_goals = prepare_df_for_export(st.session_state.goals, ["name", "current_cost", "inflation", "start_year", "end_year", "frequency"])
             df_goals.to_excel(writer, sheet_name="Goals", index=False)
             
-            df_assets = pd.DataFrame(st.session_state.assets) if st.session_state.assets else pd.DataFrame(columns=["name", "asset_type", "asset_class", "purchase_date", "invested", "value", "maturity_amt", "maturity_date", "cagr", "tagged_goals", "swp_monthly", "swp_start_year"])
-            if not df_assets.empty and 'tagged_goals' in df_assets.columns:
-                df_assets['tagged_goals'] = df_assets['tagged_goals'].apply(lambda x: ", ".join(x) if isinstance(x, list) else str(x))
+            df_assets = prepare_df_for_export(st.session_state.assets, ["name", "asset_type", "asset_class", "purchase_date", "invested", "value", "maturity_amt", "maturity_date", "cagr", "tagged_goals", "swp_monthly", "swp_start_year"])
             df_assets.to_excel(writer, sheet_name="Assets", index=False)
             
-            df_liab = pd.DataFrame(st.session_state.liabilities) if st.session_state.liabilities else pd.DataFrame(columns=["name", "principal", "rate", "months"])
+            df_liab = prepare_df_for_export(st.session_state.liabilities, ["name", "principal", "rate", "months"])
             df_liab.to_excel(writer, sheet_name="Liabilities", index=False)
             
             if 'summary_df' in st.session_state and not st.session_state['summary_df'].empty:
-                st.session_state['summary_df'].to_excel(writer, sheet_name="Goal Summary", index=False)
+                df_sum = st.session_state['summary_df'].copy()
+                for col in df_sum.columns:
+                    df_sum[col] = df_sum[col].apply(lambda x: ", ".join(map(str, x)) if isinstance(x, (list, tuple, set)) else str(x) if isinstance(x, dict) else x)
+                df_sum.to_excel(writer, sheet_name="Goal Summary", index=False)
             else:
                 pd.DataFrame(columns=["Goal","Start","End","Cumulative Cost","Target Cost (Used)","Net Present Value","Allocated from Current Corpus","% Met","Status","Current Add'l Contribution Required","Recommendation"]).to_excel(writer, sheet_name="Goal Summary", index=False)
+        return output.getvalue(), "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     except Exception:
-        # Fallback if xlsxwriter not available
+        # Fallback if no valid Excel writer is installed on the host
+        output = io.BytesIO()
         with zipfile.ZipFile(output, 'w') as zf:
             if st.session_state.income: zf.writestr("Income.csv", pd.DataFrame(st.session_state.income).to_csv(index=False))
             if st.session_state.expenses: zf.writestr("Expenses.csv", pd.DataFrame(st.session_state.expenses).to_csv(index=False))
             if st.session_state.goals: zf.writestr("Goals.csv", pd.DataFrame(st.session_state.goals).to_csv(index=False))
             
-            df_assets = pd.DataFrame(st.session_state.assets) if st.session_state.assets else pd.DataFrame()
-            if not df_assets.empty and 'tagged_goals' in df_assets.columns:
-                df_assets['tagged_goals'] = df_assets['tagged_goals'].apply(lambda x: ", ".join(x) if isinstance(x, list) else str(x))
+            df_assets = prepare_df_for_export(st.session_state.assets, [])
             if not df_assets.empty: zf.writestr("Assets.csv", df_assets.to_csv(index=False))
                 
             if st.session_state.liabilities: zf.writestr("Liabilities.csv", pd.DataFrame(st.session_state.liabilities).to_csv(index=False))
             if 'summary_df' in st.session_state and not st.session_state['summary_df'].empty: 
                 zf.writestr("Goal_Summary.csv", st.session_state['summary_df'].to_csv(index=False))
-    return output.getvalue()
+        return output.getvalue(), "zip", "application/zip"
 
 # ══════════════════════════════════════════════════════
 # VIRTUAL AUTO-SWEEP SURPLUS
@@ -2193,23 +2207,28 @@ with tab_settings:
         st.markdown("#### iv) Download All Tables to Excel")
         if st.button("📦 Prepare Tables Download", use_container_width=True, key="prep_excel_settings"):
             with st.spinner("Compiling tables..."):
-                table_bytes = generate_all_tables_excel_bytes()
+                table_bytes, ext, mime = generate_all_tables_excel_bytes()
                 st.session_state["_excel_ready"] = table_bytes
+                st.session_state["_excel_ext"] = ext
+                st.session_state["_excel_mime"] = mime
                 st.success("✓ Data compiled — click below to download")
 
         if st.session_state.get("_excel_ready"):
+            ext = st.session_state.get("_excel_ext", "xlsx")
+            mime = st.session_state.get("_excel_mime", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            
             if st.download_button(
                 "⬇️ Download All Tables",
                 data=st.session_state["_excel_ready"],
-                file_name=f"financial_planner_tables_{THIS_YEAR}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                file_name=f"financial_planner_tables_{THIS_YEAR}.{ext}",
+                mime=mime,
                 use_container_width=True,
                 key="download_excel_settings"
             ):
-                st.toast("✅ Excel file downloaded successfully!")
+                st.toast(f"✅ {ext.upper()} file downloaded successfully!")
     with c_desc_4:
         st.markdown("#### Instructions")
-        st.info("Download all your entered inputs (Income, Expenses, Goals, Assets, Liabilities) and the calculated summary tables into a single multi-sheet Excel file or ZIP. This is useful for offline backup and detailed personal analysis.")
+        st.info("Download all your entered inputs (Income, Expenses, Goals, Assets, Liabilities) and the calculated summary tables into a single multi-sheet Excel file (or ZIP archive). This is useful for offline backup and detailed personal analysis.")
 
 
 # ══════════════════════════════════════════════════════
