@@ -14,7 +14,7 @@ from reportlab.lib import colors
 from reportlab.lib.units import cm
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image as RLImage
-from reportlab.lib.enums import TA_LEFT
+from reportlab.lib.enums import TA_LEFT, TA_CENTER
 from reportlab.graphics.shapes import Drawing, Rect, String
 
 st.set_page_config(page_title="Net Worth & Goal Planner", page_icon="📊", layout="wide")
@@ -1492,7 +1492,6 @@ def generate_full_pdf_report():
         title="Net Worth & Goal Planner Report",
     )
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('T', parent=styles['Title'], fontSize=18, textColor=colors.HexColor('#1e293b'))
     heading_style = ParagraphStyle('H', parent=styles['Heading2'], fontSize=13, textColor=colors.HexColor('#2563eb'), spaceBefore=10, spaceAfter=5)
     sub_style = ParagraphStyle('S', parent=styles['Heading3'], fontSize=10, textColor=colors.HexColor('#334155'), spaceBefore=6, spaceAfter=3)
     normal_style = ParagraphStyle('N', parent=styles['Normal'], fontSize=9, leading=13)
@@ -1501,24 +1500,82 @@ def generate_full_pdf_report():
     story = []
     chart_errors = []
 
-    story.append(Paragraph("📊 Net Worth &amp; Goal Planner", title_style))
-    story.append(Paragraph("Project your finances · Track goals · Allocate assets", sub_style))
-    story.append(Paragraph("Developed by Sandeep Narang", normal_style))
+    # ══════════════════════════════════════════════════════
+    # HYBRID PDF BANNER (Mockup Implementation)
+    # ══════════════════════════════════════════════════════
+    # Banner Colors
+    navy_bg = colors.HexColor('#1e293b')
+    dark_navy_bg = colors.HexColor('#0f172a')
+    white_text = colors.white
+    grey_text = colors.HexColor('#94a3b8')
+    warning_color = colors.HexColor('#f59e0b')
+    privacy_color = colors.HexColor('#34d399')
+
+    # Banner Specific Paragraph Styles
+    b_title_style = ParagraphStyle('BT', parent=styles['Normal'], fontSize=16, textColor=white_text, fontName='Helvetica-Bold', spaceAfter=4)
+    b_sub_style = ParagraphStyle('BS', parent=styles['Normal'], fontSize=9, textColor=grey_text)
+    b_center_style = ParagraphStyle('BC', parent=styles['Normal'], fontSize=13, textColor=grey_text, fontName='Helvetica-Oblique', alignment=TA_CENTER)
+    b_disc_style = ParagraphStyle('BD', parent=styles['Normal'], fontSize=7.5, textColor=grey_text, leading=11)
+
+    # Row 1 Content
+    left_content = [
+        Paragraph("📊 Net Worth &amp; Goal Planner", b_title_style),
+        Paragraph("Project your finances · Track goals · Allocate assets", b_sub_style)
+    ]
+    center_content = Paragraph("Developed by Sandeep Narang", b_center_style)
     
+    # Grab the shiftgaze logo if it exists
     logo_path = os.path.join(os.path.dirname(__file__), "shiftgaze_logo.jpg")
+    right_content = ""
     if os.path.exists(logo_path):
-        story.append(RLImage(logo_path, width=4*cm, height=4*cm))
+        # Setting kind='proportional' prevents the image from distorting
+        right_content = RLImage(logo_path, width=4*cm, height=1.6*cm, kind='proportional')
 
+    # Row 2 Content
+    disclaimer_text = f"<font color='{warning_color}'>⚠️ <b>Disclaimer:</b></font> This calculator is for personal planning only and does not constitute financial advice. Projections are estimates — actual returns, inflation and tax may differ. Consult a qualified financial advisor before making investment decisions."
+    privacy_text = f"<font color='{privacy_color}'>🔒 <b>Privacy:</b></font> Your financial data — income, expenses, goals, and assets — never leaves your browser session. It is never stored, transmitted, or retained anywhere; it's lost when you close the tab unless you download it using the Save button."
+    
+    row2_content = [
+        Paragraph(disclaimer_text, b_disc_style),
+        Spacer(1, 4),
+        Paragraph(privacy_text, b_disc_style)
+    ]
+
+    # Construct the Table (Width totals ~27.3cm which fits perfectly within A4 margins)
+    banner_data = [
+        [left_content, center_content, right_content],
+        [row2_content, '', '']  # Empty strings are needed as placeholders for the merged cells
+    ]
+
+    banner_table = Table(banner_data, colWidths=[10.5*cm, 10.5*cm, 6.3*cm])
+    banner_table.setStyle(TableStyle([
+        # Row 1 Background & Alignment
+        ('BACKGROUND', (0, 0), (2, 0), navy_bg),
+        ('VALIGN', (0, 0), (2, 0), 'MIDDLE'),
+        ('ALIGN', (2, 0), (2, 0), 'RIGHT'),  # Push logo to the far right
+        
+        # Row 2 Background, Spanning & Alignment
+        ('BACKGROUND', (0, 1), (2, 1), dark_navy_bg),
+        ('SPAN', (0, 1), (2, 1)),            # Merge the bottom row across all 3 columns
+        ('VALIGN', (0, 1), (2, 1), 'MIDDLE'),
+        
+        # Global Table Padding
+        ('LEFTPADDING', (0, 0), (-1, -1), 12),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+        ('TOPPADDING', (0, 0), (-1, -1), 14),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 14),
+        # Add a subtle border matching your UI
+        ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#334155')),
+    ]))
+
+    # Add the Banner to the PDF
+    story.append(banner_table)
     story.append(Spacer(1, 14))
     
-    disclaimer_text = "⚠️ <b>Disclaimer:</b> This calculator is for personal planning only and does not constitute financial advice. Projections are estimates — actual returns, inflation and tax may differ. Consult a qualified financial advisor before making investment decisions."
-    privacy_text = "🔒 <b>Privacy:</b> Your financial data — income, expenses, goals, and assets — never leaves your browser session. It is never stored, transmitted, or retained anywhere; it's lost when you close the tab unless you download it using the Save button below. The one exception: if you submit feedback below, only your rating and comment text are sent — nothing from your financial data."
+    # ══════════════════════════════════════════════════════
+    # REPORT BODY STARTS HERE
+    # ══════════════════════════════════════════════════════
     
-    story.append(Paragraph(disclaimer_text, caption_style))
-    story.append(Spacer(1, 6))
-    story.append(Paragraph(privacy_text, caption_style))
-    story.append(Spacer(1, 14))
-
     story.append(Paragraph(f"Generated: {date.today().strftime('%d %b %Y')}", caption_style))
     story.append(Spacer(1, 14))
 
@@ -2048,7 +2105,7 @@ shortfall banner, and personalized recommendations.
 • Use <b>📄 Export All Tabs to PDF</b> to generate a single shareable report with every chart and table<br/>
 • Import Income, Expenses, Goals, Assets, and Liabilities in bulk via Excel — look for the import panel in each tab<br/>
 • All figures use plain comma-grouped numbers with Million/Billion abbreviations for large amounts —
-  enter and read values in whatever currency you're tracking
+  enter and read values in whatever currency youre tracking
 </div>
 </details>
 </div>
