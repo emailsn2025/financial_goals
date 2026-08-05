@@ -1605,14 +1605,20 @@ def generate_full_pdf_report():
     tot_cost  = sum(g["display_cost"] for g in alloc_list)
     funding_ratio = (tot_alloc / tot_cost * 100) if tot_cost > 0 else 0
     
+    surplus_today = calculate_surplus_today()
+    total_gap = sum(max(g.get("display_cost", 0) - g.get("allocated", 0), 0) for g in alloc_list)
+
     if total_goals == 0:
         status_text = "No Goals"
     elif fully_funded == total_goals:
-        status_text = "All Met!"
+        if surplus_today > 0:
+            status_text = f"All Met! (+{fmt(surplus_today)})"
+        else:
+            status_text = "All Met!"
     elif funding_ratio >= 75 or fully_funded > 0:
-        status_text = "Nearly Met"
+        status_text = f"Nearly Met (-{fmt(total_gap)})"
     else:
-        status_text = "Not Met"
+        status_text = f"Not Met (-{fmt(total_gap)})"
 
     # --- PDF TILES RENDERER ---
     story.append(Paragraph("Dashboard", heading_style))
@@ -2310,6 +2316,11 @@ with tab_dash:
     annual_exp = total_monthly_expense() * 12
     annual_sur = monthly_surplus() * 12
 
+    # PREPARE CONSOLIDATED METRICS
+    ten_yr_proj = fmt(max(portfolio_at_year(10) - liabilities_at_year(10), 0))
+    wcagr_val   = f"{weighted_cagr():.1f}%"
+    risk_prof   = risk_profile()
+    
     tot_alloc = sum(g["allocated"] for g in alloc_list)
     tot_cost  = sum(g["display_cost"] for g in alloc_list)
     funding_ratio = (tot_alloc / tot_cost * 100) if tot_cost > 0 else 0
@@ -2401,7 +2412,6 @@ with tab_dash:
         tiles_html += '</div>'
         st.markdown(tiles_html, unsafe_allow_html=True)
 
-        surplus_today = calculate_surplus_today()
         all_fully_funded = len(alloc_list) > 0 and all(g.get("pct", 0) >= 100 for g in alloc_list)
         total_cost_all   = sum(g.get("display_cost", 0) for g in alloc_list)
         
@@ -2435,8 +2445,6 @@ with tab_dash:
                 unsafe_allow_html=True,
             )
         elif len(alloc_list) > 0:
-            total_gap = sum(max(g.get("display_cost",0) - g.get("allocated",0), 0)
-                            for g in alloc_list)
             st.markdown(
                 f'<div style="background:linear-gradient(135deg,#dc2626,#991b1b); '
                 f'border-radius:10px; padding:18px 24px; margin-top:24px;">'
