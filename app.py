@@ -1606,7 +1606,11 @@ def generate_full_pdf_report():
     funding_ratio = (tot_alloc / tot_cost * 100) if tot_cost > 0 else 0
     
     surplus_today = calculate_surplus_today()
-    total_gap = sum(max(g.get("display_cost", 0) - g.get("allocated", 0), 0) for g in alloc_list)
+    wcagr = weighted_cagr() / 100
+    total_gap_today = sum(
+        max(g.get("display_cost", 0) - g.get("allocated", 0), 0) / ((1 + wcagr) ** max(g.get("start_year", 0), 0))
+        for g in alloc_list
+    )
 
     if total_goals == 0:
         status_text = "No Goals"
@@ -1615,10 +1619,10 @@ def generate_full_pdf_report():
             status_text = f"All Met! (+{fmt(surplus_today)})"
         else:
             status_text = "All Met!"
-    elif funding_ratio >= 75 or fully_funded > 0:
-        status_text = f"Nearly Met (-{fmt(total_gap)})"
+    elif funding_ratio >= 85:
+        status_text = f"Nearly Met (-{fmt(total_gap_today)})"
     else:
-        status_text = f"Not Met (-{fmt(total_gap)})"
+        status_text = f"Not Met (-{fmt(total_gap_today)})"
 
     # --- PDF TILES RENDERER ---
     story.append(Paragraph("Dashboard", heading_style))
@@ -2325,17 +2329,15 @@ with tab_dash:
     tot_cost  = sum(g["display_cost"] for g in alloc_list)
     funding_ratio = (tot_alloc / tot_cost * 100) if tot_cost > 0 else 0
     
-    # Calculate surplus and deficit upfront for the dashboard tile
+    # Calculate surplus upfront for the dashboard tile
     surplus_today = calculate_surplus_today()
-    total_gap = sum(max(g.get("display_cost", 0) - g.get("allocated", 0), 0) for g in alloc_list)
     
-    tot_alloc = sum(g["allocated"] for g in alloc_list)
-    tot_cost  = sum(g["display_cost"] for g in alloc_list)
-    funding_ratio = (tot_alloc / tot_cost * 100) if tot_cost > 0 else 0
-    
-    # Calculate surplus and deficit upfront for the dashboard tile
-    surplus_today = calculate_surplus_today()
-    total_gap = sum(max(g.get("display_cost", 0) - g.get("allocated", 0), 0) for g in alloc_list)
+    # Calculate Present Value (PV) of the gap using the weighted CAGR
+    wcagr = weighted_cagr() / 100
+    total_gap_today = sum(
+        max(g.get("display_cost", 0) - g.get("allocated", 0), 0) / ((1 + wcagr) ** max(g.get("start_year", 0), 0))
+        for g in alloc_list
+    )
     
     if total_goals == 0:
         status_emoji, status_text = "⚪", "No Goals"
@@ -2345,9 +2347,9 @@ with tab_dash:
         else:
             status_emoji, status_text = "😊", "All Met!"
     elif funding_ratio >= 85:
-        status_emoji, status_text = "😐", f"Nearly Met (-{fmt(total_gap)})"
+        status_emoji, status_text = "😐", f"Nearly Met (-{fmt(total_gap_today)})"
     else:
-        status_emoji, status_text = "😟", f"Not Met (-{fmt(total_gap)})"
+        status_emoji, status_text = "😟", f"Not Met (-{fmt(total_gap_today)})"
 
     # HTML TILE GENERATOR (Single-line to prevent markdown parsing errors)
     def make_tile(title, value, subtitle=""):
@@ -2453,6 +2455,11 @@ with tab_dash:
                 unsafe_allow_html=True,
             )
         elif len(alloc_list) > 0:
+            wcagr = weighted_cagr() / 100
+            total_gap_today = sum(
+                max(g.get("display_cost", 0) - g.get("allocated", 0), 0) / ((1 + wcagr) ** max(g.get("start_year", 0), 0))
+                for g in alloc_list
+            )
             st.markdown(
                 f'<div style="background:linear-gradient(135deg,#dc2626,#991b1b); '
                 f'border-radius:10px; padding:18px 24px; margin-top:24px;">'
@@ -2460,7 +2467,8 @@ with tab_dash:
                 f'⚠️ Portfolio Shortfall</div>'
                 f'<div style="color:#fee2e2; font-size:14px;">'
                 f'Total funding gap across all goals: '
-                f'<strong style="color:#fff; font-size:17px;">{fmt(total_gap)}</strong>.<br/>'
+                f'<strong style="color:#fff; font-size:17px;">{fmt(total_gap_today)}</strong> '
+                f'<b>in today\'s money</b>.<br/>'
                 f'See the Current Add\'l Contribution Required column in the Goal Summary below for per-goal top-up amounts.'
                 f'</div></div>',
                 unsafe_allow_html=True,
