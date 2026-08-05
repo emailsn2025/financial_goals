@@ -3122,59 +3122,44 @@ with tab_goals:
         if fig_mix:
             st.plotly_chart(fig_mix, width="stretch")
 
-        st.markdown("### Corpus Composition by Goal")
+        st.markdown("### Corpus Composition by Goal (Pivot Table)")
         st.caption(
-            "A specific breakdown showing precisely which assets are funding each goal, "
-            "and how much of each asset is allocated. Values are displayed in **today's money**. "
-            "Untagged assets are drawn from a shared pool and consumed sequentially. Unused assets are labeled as Surplus."
+            "A cross-tabulated breakdown showing precisely which assets are funding each goal. "
+            "Values are displayed in **today's money**. Untagged assets are drawn from a shared pool and consumed sequentially."
         )
 
-        fig_comp = go.Figure()
+        df_gran = pd.DataFrame(granular_rows)
         
-        # Extract ordered goals (excluding the summary TOTAL row)
-        ordered_goals = []
-        for r in granular_rows:
-            g = r.get("Goal", "")
-            if g != "TOTAL" and g not in ordered_goals:
-                ordered_goals.append(g)
-        
-        # Extract unique assets (excluding unfunded placeholders or empty strings)
-        asset_names = []
-        for r in granular_rows:
-            a = r.get("Asset Name", "")
-            g = r.get("Goal", "")
-            if g != "TOTAL" and a not in ["— None (Unfunded) —", ""] and a not in asset_names:
-                asset_names.append(a)
-        
-        # Add a bar trace for each asset
-        for asset in asset_names:
-            y_values = []
-            for g in ordered_goals:
-                # Retrieve and parse the formatted amount string back to a float
-                val = sum(parse_amount(r.get("How much of the Asset in Asset Name column is allocated", "0")) 
-                          for r in granular_rows if r.get("Goal") == g and r.get("Asset Name") == asset)
-                y_values.append(val)
+        if not df_gran.empty and len(df_gran) > 1:
+            # 1. Remove the pre-calculated TOTAL row so we don't double count
+            df_filtered = df_gran[df_gran["Goal"] != "TOTAL"].copy()
             
-            # Only add the trace if this asset has funds allocated somewhere
-            if sum(y_values) > 0:
-                fig_comp.add_trace(go.Bar(
-                    name=asset,
-                    x=ordered_goals,
-                    y=y_values,
-                    hovertemplate="<b>%{x}</b><br>" + asset + ": %{y:,.0f}<extra></extra>"
-                ))
-        
-        fig_comp.update_layout(
-            barmode='stack',
-            xaxis_title="Goals",
-            yaxis_title="Allocated Amount",
-            height=max(450, len(ordered_goals) * 20 + 250),
-            template=None,
-            legend=dict(orientation="h", y=-0.2),
-            margin=dict(l=60, r=20, t=30, b=20)
-        )
-        
-        st.plotly_chart(fig_comp, use_container_width=True)
+            # 2. Convert formatted strings back to numeric for the pivot math
+            df_filtered["Amount"] = df_filtered["How much of the Asset in Asset Name column is allocated"].apply(parse_amount)
+            
+            # 3. Create the pivot table (Rows: Goals, Columns: Assets, Values: Amount)
+            pivot_df = pd.pivot_table(
+                df_filtered, 
+                values="Amount", 
+                index="Goal", 
+                columns="Asset Name", 
+                aggfunc="sum", 
+                fill_value=0,
+                margins=True,       # Adds row and column totals
+                margins_name="TOTAL"
+            )
+            
+            # 4. Re-format the numeric values back into your selected display format
+            for col in pivot_df.columns:
+                pivot_df[col] = pivot_df[col].apply(fmt_full)
+                
+            # 5. Reset the index so 'Goal' renders as a standard column header in Streamlit
+            pivot_df = pivot_df.reset_index()
+            
+            # Display the resulting pivot matrix
+            display_styled_df(pivot_df)
+        else:
+            st.info("No allocation data available to display.")
 
 # ══════════════════════════════════════════════════════
 # ASSETS
