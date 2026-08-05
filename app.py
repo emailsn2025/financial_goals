@@ -253,20 +253,42 @@ def generate_all_tables_excel_bytes():
     output = io.BytesIO()
     try:
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            if st.session_state.income: pd.DataFrame(st.session_state.income).to_excel(writer, sheet_name="Income", index=False)
-            if st.session_state.expenses: pd.DataFrame(st.session_state.expenses).to_excel(writer, sheet_name="Expenses", index=False)
-            if st.session_state.goals: pd.DataFrame(st.session_state.goals).to_excel(writer, sheet_name="Goals", index=False)
-            if st.session_state.assets: pd.DataFrame(st.session_state.assets).to_excel(writer, sheet_name="Assets", index=False)
-            if st.session_state.liabilities: pd.DataFrame(st.session_state.liabilities).to_excel(writer, sheet_name="Liabilities", index=False)
-            if 'summary_df' in st.session_state: st.session_state['summary_df'].to_excel(writer, sheet_name="Goal Summary", index=False)
+            df_inc = pd.DataFrame(st.session_state.income) if st.session_state.income else pd.DataFrame(columns=["name", "monthly", "growth", "start_year", "end_year"])
+            df_inc.to_excel(writer, sheet_name="Income", index=False)
+            
+            df_exp = pd.DataFrame(st.session_state.expenses) if st.session_state.expenses else pd.DataFrame(columns=["name", "monthly", "inflation", "start_year", "end_year"])
+            df_exp.to_excel(writer, sheet_name="Expenses", index=False)
+            
+            df_goals = pd.DataFrame(st.session_state.goals) if st.session_state.goals else pd.DataFrame(columns=["name", "current_cost", "inflation", "start_year", "end_year", "frequency"])
+            df_goals.to_excel(writer, sheet_name="Goals", index=False)
+            
+            df_assets = pd.DataFrame(st.session_state.assets) if st.session_state.assets else pd.DataFrame(columns=["name", "asset_type", "asset_class", "purchase_date", "invested", "value", "maturity_amt", "maturity_date", "cagr", "tagged_goals", "swp_monthly", "swp_start_year"])
+            if not df_assets.empty and 'tagged_goals' in df_assets.columns:
+                df_assets['tagged_goals'] = df_assets['tagged_goals'].apply(lambda x: ", ".join(x) if isinstance(x, list) else str(x))
+            df_assets.to_excel(writer, sheet_name="Assets", index=False)
+            
+            df_liab = pd.DataFrame(st.session_state.liabilities) if st.session_state.liabilities else pd.DataFrame(columns=["name", "principal", "rate", "months"])
+            df_liab.to_excel(writer, sheet_name="Liabilities", index=False)
+            
+            if 'summary_df' in st.session_state and not st.session_state['summary_df'].empty:
+                st.session_state['summary_df'].to_excel(writer, sheet_name="Goal Summary", index=False)
+            else:
+                pd.DataFrame(columns=["Goal","Start","End","Cumulative Cost","Target Cost (Used)","Net Present Value","Allocated from Current Corpus","% Met","Status","Current Add'l Contribution Required","Recommendation"]).to_excel(writer, sheet_name="Goal Summary", index=False)
     except Exception:
+        # Fallback if xlsxwriter not available
         with zipfile.ZipFile(output, 'w') as zf:
             if st.session_state.income: zf.writestr("Income.csv", pd.DataFrame(st.session_state.income).to_csv(index=False))
             if st.session_state.expenses: zf.writestr("Expenses.csv", pd.DataFrame(st.session_state.expenses).to_csv(index=False))
             if st.session_state.goals: zf.writestr("Goals.csv", pd.DataFrame(st.session_state.goals).to_csv(index=False))
-            if st.session_state.assets: zf.writestr("Assets.csv", pd.DataFrame(st.session_state.assets).to_csv(index=False))
+            
+            df_assets = pd.DataFrame(st.session_state.assets) if st.session_state.assets else pd.DataFrame()
+            if not df_assets.empty and 'tagged_goals' in df_assets.columns:
+                df_assets['tagged_goals'] = df_assets['tagged_goals'].apply(lambda x: ", ".join(x) if isinstance(x, list) else str(x))
+            if not df_assets.empty: zf.writestr("Assets.csv", df_assets.to_csv(index=False))
+                
             if st.session_state.liabilities: zf.writestr("Liabilities.csv", pd.DataFrame(st.session_state.liabilities).to_csv(index=False))
-            if 'summary_df' in st.session_state: zf.writestr("Goal_Summary.csv", st.session_state['summary_df'].to_csv(index=False))
+            if 'summary_df' in st.session_state and not st.session_state['summary_df'].empty: 
+                zf.writestr("Goal_Summary.csv", st.session_state['summary_df'].to_csv(index=False))
     return output.getvalue()
 
 # ══════════════════════════════════════════════════════
@@ -2018,7 +2040,6 @@ shortfall banner, and personalized recommendations.
 </div>
 """, unsafe_allow_html=True)
 
-# Reordered Tabs: Settings is now number 1
 tab_settings, tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_liab, tab_retire = st.tabs([
     "1. ⚙️ Settings",
     "2. Dashboard", 
@@ -2034,62 +2055,15 @@ tab_settings, tab_dash, tab_inc_exp, tab_goals, tab_assets, tab_liab, tab_retire
 # ══════════════════════════════════════════════════════
 with tab_settings:
     st.markdown("# 1. ⚙️ Calculator Settings")
-    st.markdown("### Global Configuration & Exports")
     
-    # 1. NUMBER FORMAT
-    c_set, c_desc = st.columns([1, 1])
-    with c_set:
-        st.markdown("#### Number Format")
-        fmt_choice = st.radio(
-            "Select Number Format",
-            options=["Western (1,000,000)", "Indian (10,00,000)"],
-            index=0 if st.session_state.number_format == "Western" else 1,
-            horizontal=False,
-            key=f"v{_v}_number_format_radio_settings",
-        )
-        st.session_state.number_format = "Western" if fmt_choice.startswith("Western") else "Indian"
-    with c_desc:
-        st.markdown("#### Instructions")
-        st.info("Switches comma grouping and magnitude labels across every number in the app.\n\n**Western**: 1,000,000 · Million/Billion.\n\n**Indian**: 10,00,000 · Lakh/Crore.\n\n*Note: This is a display setting only; your entered values don't change.*")
+    if "_setting_success_msg" in st.session_state:
+        st.success(st.session_state["_setting_success_msg"])
+        del st.session_state["_setting_success_msg"]
 
-    st.divider()
-
-    # 2. TAX CONFIGURATION & SETTINGS
-    c_set, c_desc = st.columns([1, 1])
-    with c_set:
-        st.markdown("#### Tax Configuration & Settings")
-        apply_tax = st.toggle("Apply Automatic Tax Drag", value=st.session_state.apply_tax_drag, key=f"v{_v}_tax_drag_toggle_settings")
-        if apply_tax != st.session_state.apply_tax_drag:
-            st.session_state.apply_tax_drag = apply_tax
-            clear_asset_cache()
-            st.rerun()
-
-        st.markdown("##### Custom Tax Rates by Class (%)")
-        tr_cols = st.columns(3)
-        
-        new_rates = {}
-        for i, cls in enumerate(ASSET_CLASSES):
-            with tr_cols[i % 3]:
-                current_val = float(st.session_state.get(f"tax_rate_{cls}", DEFAULT_TAX_RATES.get(cls, 0.0)))
-                new_val = st.number_input(cls, value=current_val, min_value=0.0, max_value=99.0, step=0.5, key=f"v{_v}_tax_input_{cls}_settings")
-                new_rates[cls] = new_val
-                
-        # Only rerun if a rate actually changed
-        if any(st.session_state.get(f"tax_rate_{cls}") != new_rates[cls] for cls in ASSET_CLASSES):
-            for cls in ASSET_CLASSES:
-                st.session_state[f"tax_rate_{cls}"] = new_rates[cls]
-            clear_asset_cache()
-            st.rerun()
-    with c_desc:
-        st.markdown("#### Instructions")
-        st.info("When enabled, the app automatically applies taxes to your Expected CAGRs, Maturity Amounts, and Retirement Drawdowns based on the asset class's standard LTCG tax rate. \n\nAdjust the tax rates for each asset class as needed. If turned off, all tax impact is exactly 0.")
-
-    st.divider()
-
-    # 3. SAVE & LOAD YOUR DATA
-    c_set, c_desc = st.columns([1, 1])
-    with c_set:
-        st.markdown("#### Save & Load Your Data")
+    # i) Save & Load Your Data
+    c_set_1, c_desc_1 = st.columns([1, 1])
+    with c_set_1:
+        st.markdown("#### i) Save & Load Your Data")
         st.markdown('<div style="color: #ef4444; font-weight: bold; margin-bottom: 10px;">⚠️ Reminder: Please download your data before you end the session!</div>', unsafe_allow_html=True)
         
         export_data = {
@@ -2109,7 +2083,8 @@ with tab_settings:
             "sweep_cagr":         st.session_state.get("sweep_cagr", 8.0),
             "tax_rates":          {cls: st.session_state.get(f"tax_rate_{cls}", DEFAULT_TAX_RATES[cls]) for cls in ASSET_CLASSES}
         }
-        st.download_button("⬇️ Download JSON Save File", data=json.dumps(export_data, indent=2), file_name="financial_planner_data.json", mime="application/json", use_container_width=True, key="download_json_settings")
+        if st.download_button("⬇️ Download JSON Save File", data=json.dumps(export_data, indent=2), file_name="financial_planner_data.json", mime="application/json", use_container_width=True, key="download_json_settings"):
+            st.toast("✅ Save file downloaded successfully!")
         
         up = st.file_uploader("Load JSON Data", type=["json"], label_visibility="collapsed", key="upload_json_settings")
         if up:
@@ -2134,6 +2109,7 @@ with tab_settings:
                         st.session_state[f"tax_rate_{cls}"] = rate
                 clear_asset_cache()
                 st.session_state.data_version += 1
+                st.session_state["_setting_success_msg"] = "✅ Data successfully loaded!"
                 st.rerun()
                 
         if st.button("🔄 Reset to Empty", use_container_width=True, key="reset_json_settings"):
@@ -2153,17 +2129,68 @@ with tab_settings:
                 st.session_state[f"tax_rate_{cls}"] = DEFAULT_TAX_RATES[cls]
             clear_asset_cache()
             st.session_state.data_version += 1
+            st.session_state["_setting_success_msg"] = "✅ Data reset to empty!"
             st.rerun()
-    with c_desc:
+    with c_desc_1:
         st.markdown("#### Instructions")
         st.info("Because this planner runs entirely in your browser for privacy, your data is lost when you close the tab. Download your session as a JSON file to keep it safe.\n\nYou can later upload the JSON file here to resume your session. Use the Reset button to wipe all data and start fresh.")
 
     st.divider()
 
-    # 4. DOWNLOAD TABLES
-    c_set, c_desc = st.columns([1, 1])
-    with c_set:
-        st.markdown("#### Download All Tables to Excel")
+    # ii) Tax Configuration & Settings
+    c_set_2, c_desc_2 = st.columns([1, 1])
+    with c_set_2:
+        st.markdown("#### ii) Tax Configuration & Settings")
+        apply_tax = st.toggle("Apply Automatic Tax Drag", value=st.session_state.apply_tax_drag, key=f"v{_v}_tax_drag_toggle_settings")
+        if apply_tax != st.session_state.apply_tax_drag:
+            st.session_state.apply_tax_drag = apply_tax
+            clear_asset_cache()
+            st.rerun()
+
+        st.markdown("##### Custom Tax Rates by Class (%)")
+        tr_cols = st.columns(3)
+        
+        new_rates = {}
+        for i, cls in enumerate(ASSET_CLASSES):
+            with tr_cols[i % 3]:
+                current_val = float(st.session_state.get(f"tax_rate_{cls}", DEFAULT_TAX_RATES.get(cls, 0.0)))
+                new_val = st.number_input(cls, value=current_val, min_value=0.0, max_value=99.0, step=0.5, key=f"v{_v}_tax_input_{cls}_settings")
+                new_rates[cls] = new_val
+                
+        # Only rerun if a rate actually changed
+        if any(st.session_state.get(f"tax_rate_{cls}") != new_rates[cls] for cls in ASSET_CLASSES):
+            for cls in ASSET_CLASSES:
+                st.session_state[f"tax_rate_{cls}"] = new_rates[cls]
+            clear_asset_cache()
+            st.rerun()
+    with c_desc_2:
+        st.markdown("#### Instructions")
+        st.info("When enabled, the app automatically applies taxes to your Expected CAGRs, Maturity Amounts, and Retirement Drawdowns based on the asset class's standard LTCG tax rate. \n\nAdjust the tax rates for each asset class as needed. If turned off, all tax impact is exactly 0.")
+
+    st.divider()
+
+    # iii) Number Format
+    c_set_3, c_desc_3 = st.columns([1, 1])
+    with c_set_3:
+        st.markdown("#### iii) Number Format")
+        fmt_choice = st.radio(
+            "Select Number Format",
+            options=["Western (1,000,000)", "Indian (10,00,000)"],
+            index=0 if st.session_state.number_format == "Western" else 1,
+            horizontal=False,
+            key=f"v{_v}_number_format_radio_settings",
+        )
+        st.session_state.number_format = "Western" if fmt_choice.startswith("Western") else "Indian"
+    with c_desc_3:
+        st.markdown("#### Instructions")
+        st.info("Switches comma grouping and magnitude labels across every number in the app.\n\n**Western**: 1,000,000 · Million/Billion.\n\n**Indian**: 10,00,000 · Lakh/Crore.\n\n*Note: This is a display setting only; your entered values don't change.*")
+
+    st.divider()
+
+    # iv) Download All Tables to Excel
+    c_set_4, c_desc_4 = st.columns([1, 1])
+    with c_set_4:
+        st.markdown("#### iv) Download All Tables to Excel")
         if st.button("📦 Prepare Tables Download", use_container_width=True, key="prep_excel_settings"):
             with st.spinner("Compiling tables..."):
                 table_bytes = generate_all_tables_excel_bytes()
@@ -2171,15 +2198,16 @@ with tab_settings:
                 st.success("✓ Data compiled — click below to download")
 
         if st.session_state.get("_excel_ready"):
-            st.download_button(
+            if st.download_button(
                 "⬇️ Download All Tables",
                 data=st.session_state["_excel_ready"],
                 file_name=f"financial_planner_tables_{THIS_YEAR}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
                 key="download_excel_settings"
-            )
-    with c_desc:
+            ):
+                st.toast("✅ Excel file downloaded successfully!")
+    with c_desc_4:
         st.markdown("#### Instructions")
         st.info("Download all your entered inputs (Income, Expenses, Goals, Assets, Liabilities) and the calculated summary tables into a single multi-sheet Excel file or ZIP. This is useful for offline backup and detailed personal analysis.")
 
