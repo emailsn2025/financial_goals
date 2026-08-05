@@ -3122,44 +3122,67 @@ with tab_goals:
         if fig_mix:
             st.plotly_chart(fig_mix, width="stretch")
 
-        st.markdown("### Corpus Composition by Goal (Pivot Table)")
+        st.markdown("### Corpus Composition by Goal")
         st.caption(
-            "A cross-tabulated breakdown showing precisely which assets are funding each goal. "
+            "A hierarchical breakdown showing precisely which assets are funding each goal. "
             "Values are displayed in **today's money**. Untagged assets are drawn from a shared pool and consumed sequentially."
         )
 
-        df_gran = pd.DataFrame(granular_rows)
+        # 1. Group the existing granular_rows by Goal (excluding the overall TOTAL row)
+        grouped_data = {}
+        for r in granular_rows:
+            g = r.get("Goal", "")
+            if g == "TOTAL": 
+                continue
+            if g not in grouped_data:
+                grouped_data[g] = []
+            grouped_data[g].append(r)
+
+        hierarchical_rows = []
         
-        if not df_gran.empty and len(df_gran) > 1:
-            # 1. Remove the pre-calculated TOTAL row so we don't double count
-            df_filtered = df_gran[df_gran["Goal"] != "TOTAL"].copy()
+        # 2. Build the hierarchical table row-by-row
+        for goal, items in grouped_data.items():
+            # Sum the allocated amount for the Goal header row
+            goal_total = sum(parse_amount(r.get("How much of the Asset in Asset Name column is allocated", "0")) for r in items)
             
-            # 2. Convert formatted strings back to numeric for the pivot math
-            df_filtered["Amount"] = df_filtered["How much of the Asset in Asset Name column is allocated"].apply(parse_amount)
+            # Add Goal Row (Parent)
+            hierarchical_rows.append({
+                "Row Labels": f"⊝ {goal}",
+                "Asset Type": "",
+                "Asset Class": "",
+                "Allocated Amount": fmt_full(goal_total),
+                "% of Goal's current Funding": ""
+            })
             
-            # 3. Create the pivot table (Rows: Goals, Columns: Assets, Values: Amount)
-            pivot_df = pd.pivot_table(
-                df_filtered, 
-                values="Amount", 
-                index="Goal", 
-                columns="Asset Name", 
-                aggfunc="sum", 
-                fill_value=0,
-                margins=True,       # Adds row and column totals
-                margins_name="TOTAL"
-            )
-            
-            # 4. Re-format the numeric values back into your selected display format
-            for col in pivot_df.columns:
-                pivot_df[col] = pivot_df[col].apply(fmt_full)
-                
-            # 5. Reset the index so 'Goal' renders as a standard column header in Streamlit
-            pivot_df = pivot_df.reset_index()
-            
-            # Display the resulting pivot matrix
-            display_styled_df(pivot_df)
-        else:
-            st.info("No allocation data available to display.")
+            # Add Asset Rows underneath (Children)
+            for item in items:
+                asset_name = item.get("Asset Name", "")
+                hierarchical_rows.append({
+                    "Row Labels": f"      {asset_name}",  # Indented to mimic Excel hierarchy
+                    "Asset Type": item.get("Asset Type", ""),
+                    "Asset Class": item.get("Asset Class", ""),
+                    "Allocated Amount": item.get("How much of the Asset in Asset Name column is allocated", "0"),
+                    "% of Goal's current Funding": item.get("% of the Goal's Current Funding", "")
+                })
+
+        # 3. Create DataFrame with the exact requested column sequence (1, 2, 3, 4, 5)
+        df_hierarchical = pd.DataFrame(hierarchical_rows, columns=[
+            "Row Labels", 
+            "Asset Type", 
+            "Asset Class", 
+            "Allocated Amount", 
+            "% of Goal's current Funding"
+        ])
+
+        # 4. Style the dataframe so Streamlit respects the left-aligned spaces for the hierarchy
+        styled_hierarchical = df_hierarchical.style.set_properties(
+            subset=['Row Labels'], **{'text-align': 'left', 'white-space': 'pre'}
+        ).set_properties(
+            subset=["Asset Type", "Asset Class", "Allocated Amount", "% of Goal's current Funding"], 
+            **{'text-align': 'center'}
+        )
+        
+        st.dataframe(styled_hierarchical, hide_index=True, use_container_width=True)
 
 # ══════════════════════════════════════════════════════
 # ASSETS
