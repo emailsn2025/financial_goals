@@ -422,7 +422,7 @@ def generate_all_tables_excel_bytes():
                 liab_df = pd.DataFrame(columns=["Loan Name", "Outstanding Principal", "Interest Rate %", "Remaining Months"])
             liab_df.to_excel(writer, sheet_name="Liabilities", index=False)
             
-            # 6. Calculated Goal Summary
+            # 6. Calculated Goal Summary (Updated Columns)
             alloc_list = smart_allocation()
             wcagr_pct = weighted_cagr()
             summary_rows = []
@@ -438,14 +438,15 @@ def generate_all_tables_excel_bytes():
                     "Cumulative Cost": alloc.get("cumulative_cost", 0),
                     "Target Cost (Used)": alloc.get("display_cost", 0),
                     "Net Present Value": goal_npv(alloc, wcagr_pct),
-                    "Allocated from Current Corpus": alloc.get("allocated_today", 0),
+                    "Allocated (Current Corpus)": alloc.get("allocated_today", 0),
+                    "Allocated (Future Sweep)": alloc.get("allocated_sweep_pv", 0),
                     "% Met": alloc.get("pct", 0),
                     "Status": alloc.get("status", ""),
                     "Current Add'l Contribution Required": annual_contrib if gap > 0 else 0
                 })
             sum_df = pd.DataFrame(summary_rows)
             if sum_df.empty:
-                sum_df = pd.DataFrame(columns=["Goal", "Start", "End", "Cumulative Cost", "Target Cost (Used)", "Net Present Value", "Allocated from Current Corpus", "% Met", "Status", "Current Add'l Contribution Required"])
+                sum_df = pd.DataFrame(columns=["Goal", "Start", "End", "Cumulative Cost", "Target Cost (Used)", "Net Present Value", "Allocated (Current Corpus)", "Allocated (Future Sweep)", "% Met", "Status", "Current Add'l Contribution Required"])
             sum_df.to_excel(writer, sheet_name="Goal Summary", index=False)
 
             # 7. Corpus Composition (Hierarchical)
@@ -484,6 +485,11 @@ def generate_all_tables_excel_bytes():
                 df_hierarchical = pd.DataFrame(columns=["Row Labels", "Asset Type", "Asset Class", "Allocated Amount", "% of Goal's current Funding"])
             df_hierarchical.to_excel(writer, sheet_name="Corpus Composition", index=False)
 
+            # 8. Cash Flow Ledger
+            cf_df = generate_annual_cashflow_ledger()
+            if not cf_df.empty:
+                cf_df.to_excel(writer, sheet_name="Cash Flow", index=False)
+
         return output.getvalue(), "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     
     except Exception:
@@ -495,6 +501,8 @@ def generate_all_tables_excel_bytes():
             if st.session_state.goals: zf.writestr("Goals.csv", pd.DataFrame(st.session_state.goals).to_csv(index=False))
             if st.session_state.assets: zf.writestr("Assets.csv", pd.DataFrame(st.session_state.assets).to_csv(index=False))
             if st.session_state.liabilities: zf.writestr("Liabilities.csv", pd.DataFrame(st.session_state.liabilities).to_csv(index=False))
+            cf_df = generate_annual_cashflow_ledger()
+            if not cf_df.empty: zf.writestr("Cash_Flow.csv", cf_df.to_csv(index=False))
         return output.getvalue(), "zip", "application/zip"
 
 # ══════════════════════════════════════════════════════
@@ -859,10 +867,16 @@ def smart_allocation():
         remaining_need = cost
         allocated_today = 0.0
         allocated_fv = 0.0
+        allocated_current_fv = 0.0
+        allocated_sweep_fv = 0.0
+        allocated_current_pv = 0.0
+        allocated_sweep_pv = 0.0
         tagged_names = []
         
         def process_assets_for_smart_alloc(is_tagged_pass):
             nonlocal remaining_need, allocated_today, allocated_fv
+            nonlocal allocated_current_fv, allocated_sweep_fv
+            nonlocal allocated_current_pv, allocated_sweep_pv
             for i, a in enumerate(eff_assets):
                 if remaining_need <= 0: break
                 is_tagged = gname and gname in (a.get("tagged_goals") or [])
@@ -885,9 +899,16 @@ def smart_allocation():
                         remaining_need -= draw
                         allocated_fv += draw
                         
-                        val_today = a.get("value", 0) if not a.get("is_virtual_surplus") else 0
-                        draw_today = val_today * frac_used
-                        allocated_today += draw_today
+                        if a.get("is_virtual_surplus", False):
+                            allocated_sweep_fv += draw
+                            pv_draw = draw / ((1 + wcagr_pct/100.0)**yr) if wcagr_pct > 0 else draw
+                            allocated_sweep_pv += pv_draw
+                        else:
+                            val_today = a.get("value", 0)
+                            draw_today = val_today * frac_used
+                            allocated_current_fv += draw
+                            allocated_current_pv += draw_today
+                            allocated_today += draw_today
 
         # 1. Consume Tagged Assets
         process_assets_for_smart_alloc(is_tagged_pass=True)
@@ -902,14 +923,18 @@ def smart_allocation():
         
         results.append({
             **g,
-            "display_cost":     cost,
-            "allocated":        allocated_fv,
-            "allocated_today":  allocated_today,
-            "tagged_contrib":   tagged_contrib_fv,
-            "untagged_contrib": untagged_contrib_fv,
-            "tagged_assets":    tagged_names,
-            "pct":              pct,
-            "status":           status,
+            "display_cost":         cost,
+            "allocated":            allocated_fv,
+            "allocated_today":      allocated_today,
+            "allocated_current_fv": allocated_current_fv,
+            "allocated_sweep_fv":   allocated_sweep_fv,
+            "allocated_current_pv": allocated_current_pv,
+            "allocated_sweep_pv":   allocated_sweep_pv,
+            "tagged_contrib":       tagged_contrib_fv,
+            "untagged_contrib":     untagged_contrib_fv,
+            "tagged_assets":        tagged_names,
+            "pct":                  pct,
+            "status":               status,
         })
     return results
 
@@ -1907,15 +1932,16 @@ def generate_full_pdf_report():
         wcagr_pct  = weighted_cagr()
         wcagr      = wcagr_pct / 100
 
-        headers = ["Goal","Start","End","Cumulative Cost","Target Cost","NPV","Alloc. (Today's Value)","% Met","Status"]
+        headers = ["Goal","Start","End","Cumulative Cost","Target Cost","NPV","Alloc. (Current)","Alloc. (Sweep)","% Met","Status"]
         rows = []
-        tot_cum = tot_target = tot_npv = tot_alloc_today = 0.0
+        tot_cum = tot_target = tot_npv = tot_alloc_today = tot_alloc_sweep = 0.0
         
         for alloc in alloc_list:
             name  = alloc["name"] or "(unnamed)"
             pct   = alloc["pct"]
             cost  = alloc["display_cost"]
             at    = alloc["allocated_today"]
+            sweep = alloc.get("allocated_sweep_pv", 0)
             npv   = goal_npv(alloc, wcagr_pct)
             
             start_cal = alloc["start_year"] if alloc["start_year"] > 1000 else rel_to_cal(goal_start_year(alloc))
@@ -1924,15 +1950,16 @@ def generate_full_pdf_report():
             
             rows.append([
                 name, str(start_cal), str(end_cal) if freq>0 or end_cal!=start_cal else "—",
-                fmt_full(alloc["cumulative_cost"]), fmt_full(cost), fmt_full(npv), fmt_full(at),
+                fmt_full(alloc["cumulative_cost"]), fmt_full(cost), fmt_full(npv), fmt_full(at), fmt_full(sweep),
                 f"{pct}%", alloc.get("status","—"),
             ])
             tot_cum += alloc["cumulative_cost"]
             tot_target += cost
             tot_npv += npv
             tot_alloc_today += at
+            tot_alloc_sweep += sweep
             
-        rows.append(["TOTAL","","", fmt_full(tot_cum), fmt_full(tot_target), fmt_full(tot_npv), fmt_full(tot_alloc_today), "", ""])
+        rows.append(["TOTAL","","", fmt_full(tot_cum), fmt_full(tot_target), fmt_full(tot_npv), fmt_full(tot_alloc_today), fmt_full(tot_alloc_sweep), "", ""])
         story.append(_pdf_table(headers, rows))
         story.append(Spacer(1, 10))
 
@@ -2621,8 +2648,13 @@ with tab_dash:
                 f'<div style="background:{bar_color}; height:100%; width:{pct}%; border-radius:6px; transition:width 0.4s;"></div>'
                 f'<div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.5);">{g["pct"]}%</div>'
                 f'</div>'
-                f'<div style="font-size:11px; color:#94a3b8; margin-top:8px;">{cost_label}: {fmt(g["display_cost"])}</div>'
-                f'<div style="font-size:11px; color:#94a3b8;">Allocated: {fmt(g["allocated"])}</div>'
+                f'<div style="font-size:11px; color:#94a3b8; margin-top:8px;">Target Cost: {fmt(g["display_cost"])}</div>'
+                f'<div style="font-size:11px; color:#94a3b8;">Funded from Portfolio: {fmt(g.get("allocated_current_fv", 0))}</div>'
+            )
+            if g.get("allocated_sweep_fv", 0) > 0:
+                tile += f'<div style="font-size:11px; color:#94a3b8;">Funded from Auto-Sweep: {fmt(g["allocated_sweep_fv"])}</div>'
+                
+            tile += (
                 f'<div style="margin-top:8px;">'
                 f'<span style="background:{bar_color}; color:#fff; padding:3px 10px; border-radius:10px; font-size:10px; font-weight:600;">{g["status"]}</span>'
                 f'</div>'
@@ -2720,6 +2752,7 @@ with tab_dash:
         summary_rows = []
         tot_cumulative = tot_target = tot_npv = tot_allocated_today = tot_contrib = 0.0
         tot_allocated = 0.0
+        tot_allocated_sweep = 0.0
         fully_funded_count = 0
 
         for alloc in alloc_list:
@@ -2763,7 +2796,8 @@ with tab_dash:
                 "Cumulative Cost":                   fmt_full(alloc["cumulative_cost"]),
                 "Target Cost (Used)":                fmt_full(cost),
                 "Net Present Value":                 fmt_full(npv_of_cost),
-                "Allocated from Current Corpus":     fmt_full(allocated_today),
+                "Allocated (Current Corpus)":        fmt_full(allocated_today),
+                "Allocated (Future Sweep)":          fmt_full(alloc.get("allocated_sweep_pv", 0)),
                 "% Met":                             f"{pct}%",
                 "Status":                            alloc["status"],
                 "Current Add'l Contribution Required": fmt_full(annual_contrib) if gap > 0 else "—",
@@ -2775,6 +2809,7 @@ with tab_dash:
             tot_npv              += npv_of_cost
             tot_allocated_today  += allocated_today
             tot_allocated        += allocated
+            tot_allocated_sweep  += alloc.get("allocated_sweep_pv", 0)
             tot_contrib          += annual_contrib if gap > 0 else 0
 
         overall_pct = round((tot_allocated / tot_target) * 100) if tot_target > 0 else 0
@@ -2785,7 +2820,8 @@ with tab_dash:
             "Cumulative Cost":                   fmt_full(tot_cumulative),
             "Target Cost (Used)":                fmt_full(tot_target),
             "Net Present Value":                 fmt_full(tot_npv),
-            "Allocated from Current Corpus":     fmt_full(tot_allocated_today),
+            "Allocated (Current Corpus)":        fmt_full(tot_allocated_today),
+            "Allocated (Future Sweep)":          fmt_full(tot_allocated_sweep),
             "% Met":                             f"{overall_pct}%",
             "Status":                            f"{fully_funded_count}/{len(alloc_list)} Fully Funded",
             "Current Add'l Contribution Required": fmt_full(tot_contrib) if tot_contrib > 0 else "—",
