@@ -249,6 +249,88 @@ def display_styled_df(df, height=None):
     
     st.dataframe(styled, **kwargs)
 
+def generate_annual_cashflow_ledger():
+    proj_start = int(st.session_state.get("proj_start_year", THIS_YEAR))
+    proj_end = int(st.session_state.get("proj_end_year", THIS_YEAR + 30))
+    
+    # Fetch Retirement Sim to map SWP & Tax
+    ret_corpus = float(st.session_state.get("ret_opening_corpus", 0) or 0)
+    ret_goal_name = st.session_state.get("ret_goal_name", "")
+    ret_qw = float(st.session_state.get("ret_q_withdrawal", 0) or 0)
+    ret_sim_annual = {}
+    if ret_corpus > 0 and ret_qw > 0:
+        ret_return = st.session_state.get("ret_annual_return", 9.0)
+        ret_tax_class = st.session_state.get("ret_tax_class", "Equity")
+        ret_custom_tax = st.session_state.get("ret_custom_tax", 20.0)
+        ret_winf = st.session_state.get("ret_w_inflation", 7.0)
+        eff_tax = (ret_custom_tax/100) if ret_custom_tax > 0 else None
+        
+        selected_goal = next((g for g in st.session_state.get("goals", []) if (g.get("name") or "") == ret_goal_name), None)
+        goal_year_rel = cal_to_rel(selected_goal.get("start_year", THIS_YEAR)) if selected_goal else 0
+        start_cal_year = rel_to_cal(goal_year_rel)
+        
+        rows_sim, _ = retirement_simulation(ret_corpus, ret_return, ret_tax_class, ret_qw, ret_winf, eff_tax, start_cal_year)
+        for r in rows_sim:
+            yr = int(r["Quarter"].split(" ")[0])
+            if yr not in ret_sim_annual:
+                ret_sim_annual[yr] = {"Withdrawal": 0, "Tax": 0}
+            ret_sim_annual[yr]["Withdrawal"] += r["Withdrawal"]
+            ret_sim_annual[yr]["Tax"] += r["Tax Amount"]
+
+    # Map goals by year
+    goals_by_yr = {}
+    for g in goal_projections():
+        for yr_rel, cost in g.get("occurrences", []):
+            cal_yr = proj_start + yr_rel
+            goals_by_yr[cal_yr] = goals_by_yr.get(cal_yr, 0) + cost
+            
+    ledger = []
+    wcagr_pct = weighted_cagr()
+    auto_sweep = st.session_state.get("auto_sweep_surplus", False)
+    
+    for cal_y in range(proj_start, proj_end + 1):
+        rel_y = cal_y - proj_start
+        
+        # 2. Operating Cash Flow
+        inc = sum(compound(e["monthly"], e.get("growth", 5.0), rel_y) * 12 for e in st.session_state.income if int(e.get("start_year", proj_start)) <= cal_y <= int(e.get("end_year", 2100)))
+        exp = sum(compound(e["monthly"], e.get("inflation", 6.0), rel_y) * 12 for e in st.session_state.expenses if int(e.get("start_year", proj_start)) <= cal_y <= int(e.get("end_year", 2100)))
+        
+        surplus = inc - exp
+        swept = max(surplus, 0) if auto_sweep else 0
+        
+        # 3. Capital & Goal Flows
+        goal_outflow = goals_by_yr.get(cal_y, 0)
+        ret_w = ret_sim_annual.get(cal_y, {}).get("Withdrawal", 0)
+        ret_t = ret_sim_annual.get(cal_y, {}).get("Tax", 0)
+        
+        # 4. Portfolio Health
+        port_start = portfolio_at_year(rel_y)
+        port_end = portfolio_at_year(rel_y + 1)
+        liab_start = liabilities_at_year(rel_y)
+        liab_end = liabilities_at_year(rel_y + 1)
+        
+        nw_start = port_start - liab_start
+        nw_end = port_end - liab_end
+        gross_ret = port_start * (wcagr_pct / 100.0)
+        
+        ledger.append({
+            "Calendar Year": cal_y,
+            "Projection Year": f"Year {rel_y}",
+            "Total Annual Income": inc,
+            "Total Annual Expenses": exp,
+            "Operating Surplus / Shortfall": surplus,
+            "Swept Cash (Auto-Invested)": swept,
+            "Goal Outflows": goal_outflow,
+            "Retirement SWP Withdrawals": ret_w,
+            "Tax Paid (from SWP)": ret_t,
+            "Opening Net Worth": nw_start,
+            "Gross Investment Returns": gross_ret,
+            "Closing Net Worth": nw_end,
+            "Outstanding Liabilities": liab_end
+        })
+        
+    return pd.DataFrame(ledger)
+
 def generate_all_tables_excel_bytes():
     output = io.BytesIO()
     try:
