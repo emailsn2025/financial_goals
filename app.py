@@ -2391,54 +2391,66 @@ with tab_settings:
             "sweep_cagr":         st.session_state.get("sweep_cagr", 8.0),
             "tax_rates":          {cls: st.session_state.get(f"tax_rate_{cls}", DEFAULT_TAX_RATES[cls]) for cls in ASSET_CLASSES}
         }
-        if st.download_button("⬇️ Download JSON Save File", data=json.dumps(export_data, indent=2), file_name="financial_planner_data.json", mime="application/json", use_container_width=True, key="download_json_settings"):
-            st.toast("✅ Save file downloaded successfully!")
         
+        # 1. File Uploader moved to the top
         up = st.file_uploader("Load JSON Data", type=["json"], label_visibility="collapsed", key="upload_json_settings")
         if up:
             try:
                 st.session_state["_pending_load"] = json.loads(up.read().decode())
                 st.success("✓ File read — ready to apply")
             except Exception as e: st.error(str(e))
-        if st.session_state.get("_pending_load"):
-            if st.button("✅ Apply Loaded Data", use_container_width=True, type="primary", key="apply_json_settings"):
-                d = st.session_state.pop("_pending_load")
-                for k in ["income","expenses","goals","assets","liabilities","projection_years",
-                          "ret_opening_corpus","ret_goal_name","ret_annual_return",
-                          "ret_tax_class","ret_custom_tax","ret_q_withdrawal","ret_w_inflation", 
-                          "apply_tax_drag", "auto_sweep_surplus", "sweep_cagr"]:
-                    if k in d:
-                        if k == "liabilities" and isinstance(d[k], (int, float)):
-                            st.session_state[k] = []
-                        else:
-                            st.session_state[k] = d[k]
-                if "tax_rates" in d:
-                    for cls, rate in d["tax_rates"].items():
-                        st.session_state[f"tax_rate_{cls}"] = rate
+            
+        # 2. Render buttons as 3 side-by-side tiles
+        btn_col1, btn_col2, btn_col3 = st.columns(3)
+        
+        with btn_col1:
+            if st.download_button("⬇️ Download Data", data=json.dumps(export_data, indent=2), file_name="financial_planner_data.json", mime="application/json", use_container_width=True, key="download_json_settings"):
+                st.toast("✅ Save file downloaded successfully!")
+                
+        with btn_col2:
+            if st.session_state.get("_pending_load"):
+                if st.button("✅ Apply Loaded", use_container_width=True, type="primary", key="apply_json_settings"):
+                    d = st.session_state.pop("_pending_load")
+                    for k in ["income","expenses","goals","assets","liabilities","projection_years",
+                              "ret_opening_corpus","ret_goal_name","ret_annual_return",
+                              "ret_tax_class","ret_custom_tax","ret_q_withdrawal","ret_w_inflation", 
+                              "apply_tax_drag", "auto_sweep_surplus", "sweep_cagr"]:
+                        if k in d:
+                            if k == "liabilities" and isinstance(d[k], (int, float)):
+                                st.session_state[k] = []
+                            else:
+                                st.session_state[k] = d[k]
+                    if "tax_rates" in d:
+                        for cls, rate in d["tax_rates"].items():
+                            st.session_state[f"tax_rate_{cls}"] = rate
+                    clear_asset_cache()
+                    st.session_state.data_version += 1
+                    st.session_state["_setting_success_msg"] = "✅ Data successfully loaded!"
+                    st.rerun()
+            else:
+                # Disabled placeholder to keep the 3-tile grid shape intact
+                st.button("✅ Apply Loaded", disabled=True, use_container_width=True, key="apply_json_disabled")
+                
+        with btn_col3:
+            if st.button("🔄 Reset Data", use_container_width=True, key="reset_json_settings"):
+                for k in ["income","expenses","goals","assets","liabilities"]: st.session_state[k] = []
+                st.session_state.projection_years = 30
+                st.session_state.ret_opening_corpus = 0
+                st.session_state.ret_goal_name      = ""
+                st.session_state.ret_annual_return  = 9.0
+                st.session_state.ret_tax_class      = "Equity"
+                st.session_state.ret_custom_tax     = 20.0
+                st.session_state.ret_q_withdrawal   = 0
+                st.session_state.ret_w_inflation    = 7.0
+                st.session_state.apply_tax_drag     = False
+                st.session_state.auto_sweep_surplus = False
+                st.session_state.sweep_cagr         = 8.0
+                for cls in ASSET_CLASSES:
+                    st.session_state[f"tax_rate_{cls}"] = DEFAULT_TAX_RATES[cls]
                 clear_asset_cache()
                 st.session_state.data_version += 1
-                st.session_state["_setting_success_msg"] = "✅ Data successfully loaded!"
+                st.session_state["_setting_success_msg"] = "✅ Data reset to empty!"
                 st.rerun()
-                
-        if st.button("🔄 Reset to Empty", use_container_width=True, key="reset_json_settings"):
-            for k in ["income","expenses","goals","assets","liabilities"]: st.session_state[k] = []
-            st.session_state.projection_years = 30
-            st.session_state.ret_opening_corpus = 0
-            st.session_state.ret_goal_name      = ""
-            st.session_state.ret_annual_return  = 9.0
-            st.session_state.ret_tax_class      = "Equity"
-            st.session_state.ret_custom_tax     = 20.0
-            st.session_state.ret_q_withdrawal   = 0
-            st.session_state.ret_w_inflation    = 7.0
-            st.session_state.apply_tax_drag     = False
-            st.session_state.auto_sweep_surplus = False
-            st.session_state.sweep_cagr         = 8.0
-            for cls in ASSET_CLASSES:
-                st.session_state[f"tax_rate_{cls}"] = DEFAULT_TAX_RATES[cls]
-            clear_asset_cache()
-            st.session_state.data_version += 1
-            st.session_state["_setting_success_msg"] = "✅ Data reset to empty!"
-            st.rerun()
     with c_desc_1:
         st.markdown("#### Instructions")
         st.info("Because this planner runs entirely in your browser for privacy, your data is lost when you close the tab. Download your session as a JSON file to keep it safe.\n\nYou can later upload the JSON file here to resume your session. Use the Reset button to wipe all data and start fresh.")
