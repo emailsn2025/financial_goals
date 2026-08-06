@@ -51,7 +51,7 @@ st.markdown("""
     div[data-testid="stMetric"] { border: 1px solid rgba(128,128,128,0.2); border-radius: 10px; padding: 12px 16px; }
     div[data-testid="stMetric"] label { font-size: 13px !important; }
     
-    /* Force strictly the Tab Navigation Headers to 26px (prevents enlarging standard buttons) */
+    /* Force strictly the Tab Navigation Headers to 26px */
     button[role="tab"] p, button[role="tab"] span {
         font-size: 26px !important;
         font-weight: 700 !important;
@@ -1199,9 +1199,9 @@ def get_recommendations():
 # EXCEL IMPORT HELPERS
 # ══════════════════════════════════════════════════════
 
-def import_goals_from_excel(uploaded_file):
+def import_goals_from_excel(uploaded_file, sheet_name=0):
     try:
-        df = pd.read_excel(uploaded_file)
+        df = pd.read_excel(uploaded_file, sheet_name=sheet_name)
         df.columns = [c.strip().lower() for c in df.columns]
         col_map = {
             "name":        ["goal name","name","goal"],
@@ -1236,29 +1236,34 @@ def import_goals_from_excel(uploaded_file):
                         g[field] = int(float(str(val).strip() or 0))
                     else:
                         g[field] = str(val).strip()
+            
+            # Skip completely blank rows
+            if not g["name"] and g["current_cost"] == 0:
+                continue
+                
             g["end_year"] = max(g["end_year"], g["start_year"])
             new_goals.append(g)
         return new_goals, None
     except Exception as e:
         return [], str(e)
 
-def import_assets_from_excel(uploaded_file):
+def import_assets_from_excel(uploaded_file, sheet_name=0):
     try:
-        df = pd.read_excel(uploaded_file)
+        df = pd.read_excel(uploaded_file, sheet_name=sheet_name)
         df.columns = [c.strip().lower() for c in df.columns]
         col_map = {
             "name":           ["asset name","name","asset"],
             "asset_type":     ["asset type","type","instrument type","sub type","subtype","instrument"],
             "asset_class":    ["class","asset class"],
-            "purchase_date":  ["purchase date","buy date","date of purchase","start date"],
-            "invested":       ["invested amount","invested","cost","purchase price","buy price"],
-            "value":          ["current value","value","current","market value"],
-            "maturity_amt":   ["maturity amount","maturity","maturity value","fv","future value"],
-            "maturity_date":  ["maturity date","due date","end date"],
-            "cagr":           ["cagr %","cagr","return %","expected return","return"],
-            "tagged_goals":   ["tag goals","goals","tagged goals","goal"],
-            "swp_monthly":    ["swp monthly","swp","swp amount","swp /mo"],
-            "swp_start_year": ["swp start yr","swp start year","swp year","swp from"],
+            "purchase_date":  ["purch date","purchase date","buy date","date of purchase","start date"],
+            "invested":       ["invested","invested amount","cost","purchase price","buy price"],
+            "value":          ["cur val","current value","value","current","market value"],
+            "maturity_amt":   ["mat amt","maturity amount","maturity","maturity value","fv","future value"],
+            "maturity_date":  ["mat date","maturity date","due date","end date"],
+            "cagr":           ["gross cagr %","cagr %","cagr","return %","expected return","return"],
+            "tagged_goals":   ["tag goal","tag goals","goals","tagged goals","goal"],
+            "swp_monthly":    ["swp /mo","swp monthly","swp","swp amount"],
+            "swp_start_year": ["swp yr","swp start yr","swp start year","swp year","swp from"],
         }
         def find_col(df, options):
             for o in options:
@@ -1294,9 +1299,16 @@ def import_assets_from_excel(uploaded_file):
                         raw = str(val).strip()
                         a[field] = [x.strip() for x in raw.split(",") if x.strip()]
                     elif field in ("purchase_date","maturity_date"):
-                        a[field] = str(val).strip()
+                        if hasattr(val, 'strftime'):
+                            a[field] = val.strftime("%Y-%m-%d")
+                        else:
+                            a[field] = str(val).strip()
                     else:
                         a[field] = str(val).strip()
+
+            # Skip blank rows
+            if not a["name"] and a["value"] == 0 and a["invested"] == 0:
+                continue
 
             inv = a["invested"]
             mat = a["maturity_amt"]
@@ -1326,9 +1338,9 @@ def import_assets_from_excel(uploaded_file):
     except Exception as e:
         return [], [], str(e)
 
-def import_liabilities_from_excel(uploaded_file):
+def import_liabilities_from_excel(uploaded_file, sheet_name=0):
     try:
-        df = pd.read_excel(uploaded_file)
+        df = pd.read_excel(uploaded_file, sheet_name=sheet_name)
         df.columns = [c.strip().lower() for c in df.columns]
         col_map = {
             "name":       ["loan name", "name", "loan", "description"],
@@ -1356,18 +1368,23 @@ def import_liabilities_from_excel(uploaded_file):
                         l[field] = int(float(str(val).strip() or 12))
                     else:
                         l[field] = str(val).strip()
+            
+            # Skip blank rows
+            if not l["name"] and l["principal"] == 0:
+                continue
+                
             new_liab.append(l)
         return new_liab, None
     except Exception as e:
         return [], str(e)
 
-def import_income_from_excel(uploaded_file):
+def import_income_from_excel(uploaded_file, sheet_name=0):
     try:
-        df = pd.read_excel(uploaded_file)
+        df = pd.read_excel(uploaded_file, sheet_name=sheet_name)
         df.columns = [c.strip().lower() for c in df.columns]
         col_map = {
             "name":       ["source","name","income source","description"],
-            "monthly":    ["monthly rs","monthly","amount","monthly amount","rs"],
+            "monthly":    ["monthly","monthly rs","amount","monthly amount","rs"],
             "growth":     ["growth %/yr","growth","growth rate","growth %","rate"],
             "start_year": ["start year","start","from year","from"],
             "end_year":   ["end year","end","to year","until","to"],
@@ -1390,19 +1407,24 @@ def import_income_from_excel(uploaded_file):
                         if raw <= 1000: raw = THIS_YEAR + raw
                         inc[field] = max(2000, min(raw, 2100))
                     else: inc[field] = str(val).strip()
+            
+            # Skip blank rows
+            if not inc["name"] and inc["monthly"] == 0:
+                continue
+                
             inc["end_year"] = max(inc["end_year"], inc["start_year"])
             new_income.append(inc)
         return new_income, None
     except Exception as e:
         return [], str(e)
 
-def import_expenses_from_excel(uploaded_file):
+def import_expenses_from_excel(uploaded_file, sheet_name=0):
     try:
-        df = pd.read_excel(uploaded_file)
+        df = pd.read_excel(uploaded_file, sheet_name=sheet_name)
         df.columns = [c.strip().lower() for c in df.columns]
         col_map = {
             "name":       ["name","expense","description","category"],
-            "monthly":    ["monthly rs","monthly","amount","monthly amount","rs"],
+            "monthly":    ["monthly","monthly rs","amount","monthly amount","rs"],
             "inflation":  ["inflation %","inflation","inflation rate","rate"],
             "start_year": ["start year","start","from year","from"],
             "end_year":   ["end year","end","to year","until","to"],
@@ -1425,6 +1447,11 @@ def import_expenses_from_excel(uploaded_file):
                         if raw <= 1000: raw = THIS_YEAR + raw
                         exp[field] = max(2000, min(raw, 2100))
                     else: exp[field] = str(val).strip()
+                    
+            # Skip blank rows
+            if not exp["name"] and exp["monthly"] == 0:
+                continue
+                
             exp["end_year"] = max(exp["end_year"], exp["start_year"])
             new_expenses.append(exp)
         return new_expenses, None
@@ -2248,7 +2275,7 @@ st.markdown("""
 <div style="margin-top:12px; color:#cbd5e1; font-size:13px; line-height:1.7;">
 
 <b style="color:#93c5fd;">Data Entry via Excel (New Workflow)</b><br/>
-To ensure data integrity, all manual data entry tables have been removed from the UI. You must now upload your inputs directly using Excel. Go to the <b>Settings</b> tab and click <b>📥 Download Blank Master Template</b> to get the correctly formatted spreadsheet. Fill it out locally, and upload the respective sheets in the Income, Expenses, Goals, Assets, and Liabilities tabs. The tables displayed in the app are now read-only views of your uploaded data.
+To ensure data integrity, all manual data entry tables have been removed from the UI. You must now upload your inputs directly using Excel. Go to the <b>Settings</b> tab and click <b>📥 Download Blank Master Template</b> to get the correctly formatted spreadsheet. Fill it out locally, and upload the file back into the Master Uploader in the Settings tab. The tables displayed across the app are now read-only views of your uploaded data.
 
 <br/><br/><b style="color:#93c5fd;">Step 1 — Income &amp; Expenses</b><br/>
 Upload your income sources (salary, rental, freelance) and your expenses (rent, groceries, loan EMIs).
@@ -2312,14 +2339,87 @@ with tab_settings:
             
     with c_desc_0:
         st.markdown("#### Instructions")
-        st.info("To maintain strict data integrity, live UI editing has been disabled. Download this blank template, fill out your financial data locally in Excel, and upload the respective sheets directly into the Income, Expenses, Goals, Assets, and Liabilities tabs.")
+        st.info("To maintain strict data integrity, live UI editing has been disabled. Download this blank template, fill out your financial data locally in Excel, and upload the completed file in the Master Upload section below to automatically sync the entire app.")
 
     st.divider()
 
-    # ii) Save & Load Your Data
+    # ii) Master Excel Upload (NEW)
+    c_set_master, c_desc_master = st.columns([1, 1])
+    with c_set_master:
+        st.markdown("#### ii) Master Excel Upload")
+        st.markdown('<div style="color: #2563eb; font-weight: bold; margin-bottom: 10px;">Upload your filled Master Template here.</div>', unsafe_allow_html=True)
+        
+        master_file = st.file_uploader("Upload Master Excel Template", type=["xlsx", "xls"], key=f"v{_v}_master_upload", label_visibility="collapsed")
+        
+        if master_file:
+            file_bytes = master_file.getvalue()
+            try:
+                xls = pd.ExcelFile(io.BytesIO(file_bytes))
+                sheet_map = {s.strip().lower(): s for s in xls.sheet_names}
+                
+                c_rep, c_app = st.columns(2)
+                replace_all = c_rep.button("Replace All Data", key=f"v{_v}_master_replace", type="primary", use_container_width=True)
+                append_all = c_app.button("Append to Existing", key=f"v{_v}_master_append", use_container_width=True)
+                
+                if replace_all or append_all:
+                    if replace_all:
+                        st.session_state.income = []
+                        st.session_state.expenses = []
+                        st.session_state.goals = []
+                        st.session_state.assets = []
+                        st.session_state.liabilities = []
+                    
+                    msgs = []
+                    
+                    if "income" in sheet_map:
+                        new_inc, err = import_income_from_excel(io.BytesIO(file_bytes), sheet_name=sheet_map["income"])
+                        if not err:
+                            st.session_state.income.extend(new_inc)
+                            msgs.append(f"{len(new_inc)} Income")
+                            
+                    if "expenses" in sheet_map:
+                        new_exp, err = import_expenses_from_excel(io.BytesIO(file_bytes), sheet_name=sheet_map["expenses"])
+                        if not err:
+                            st.session_state.expenses.extend(new_exp)
+                            msgs.append(f"{len(new_exp)} Expenses")
+                            
+                    if "goals" in sheet_map:
+                        new_goals, err = import_goals_from_excel(io.BytesIO(file_bytes), sheet_name=sheet_map["goals"])
+                        if not err:
+                            st.session_state.goals.extend(new_goals)
+                            msgs.append(f"{len(new_goals)} Goals")
+                            
+                    if "assets" in sheet_map:
+                        new_assets, def_cagr, err = import_assets_from_excel(io.BytesIO(file_bytes), sheet_name=sheet_map["assets"])
+                        if not err:
+                            st.session_state.assets.extend(new_assets)
+                            st.session_state["_cagr_defaults_applied"] = def_cagr
+                            msgs.append(f"{len(new_assets)} Assets")
+                            
+                    if "liabilities" in sheet_map:
+                        new_liab, err = import_liabilities_from_excel(io.BytesIO(file_bytes), sheet_name=sheet_map["liabilities"])
+                        if not err:
+                            st.session_state.liabilities.extend(new_liab)
+                            msgs.append(f"{len(new_liab)} Liabilities")
+                    
+                    st.session_state.data_version += 1
+                    clear_asset_cache()
+                    st.session_state["_setting_success_msg"] = f"✅ Master Upload Complete! Added: {', '.join(msgs)}"
+                    st.rerun()
+                    
+            except Exception as e:
+                st.error(f"Failed to read Master Excel: {e}")
+
+    with c_desc_master:
+        st.markdown("#### Instructions")
+        st.info("The app will automatically scan the uploaded file for sheets named **Income**, **Expenses**, **Goals**, **Assets**, and **Liabilities**. It will extract the data and update all tabs simultaneously.")
+
+    st.divider()
+
+    # iii) Save & Load Your Data (JSON)
     c_set_1, c_desc_1 = st.columns([1, 1])
     with c_set_1:
-        st.markdown("#### ii) Save & Load Your App State (JSON)")
+        st.markdown("#### iii) Save & Load Your App State (JSON)")
         st.markdown('<div style="color: #ef4444; font-weight: bold; margin-bottom: 10px;">⚠️ Reminder: Please download your JSON data before you end the session!</div>', unsafe_allow_html=True)
         
         export_data = {
@@ -2402,10 +2502,10 @@ with tab_settings:
 
     st.divider()
 
-    # iii) Tax Configuration & Settings
+    # iv) Tax Configuration & Settings
     c_set_2, c_desc_2 = st.columns([1, 1])
     with c_set_2:
-        st.markdown("#### iii) Tax Configuration & Settings")
+        st.markdown("#### iv) Tax Configuration & Settings")
         apply_tax = st.toggle("Apply Automatic Tax Drag", value=st.session_state.apply_tax_drag, key=f"v{_v}_tax_drag_toggle_settings")
         if apply_tax != st.session_state.apply_tax_drag:
             st.session_state.apply_tax_drag = apply_tax
@@ -2433,10 +2533,10 @@ with tab_settings:
 
     st.divider()
 
-    # iv) Number Format
+    # v) Number Format
     c_set_3, c_desc_3 = st.columns([1, 1])
     with c_set_3:
-        st.markdown("#### iv) Number Format")
+        st.markdown("#### v) Number Format")
         fmt_choice = st.radio(
             "Select Number Format",
             options=["Western (1,000,000)", "Indian (10,00,000)"],
@@ -2451,10 +2551,10 @@ with tab_settings:
 
     st.divider()
 
-    # v) Download All Tables to Excel
+    # vi) Download All Tables to Excel
     c_set_4, c_desc_4 = st.columns([1, 1])
     with c_set_4:
-        st.markdown("#### v) Download All Tables to Excel")
+        st.markdown("#### vi) Download All Tables to Excel")
         if st.button("📦 Prepare Tables Download", use_container_width=True, key="prep_excel_settings"):
             with st.spinner("Compiling tables..."):
                 table_bytes, ext, mime = generate_all_tables_excel_bytes()
@@ -2909,27 +3009,6 @@ with tab_inc_exp:
     st.caption(f"Total: {fmt_full(total_monthly_income())}/month")
     st.markdown('<div style="color: #ef4444; font-weight: 600; font-size: 13px; margin-bottom: 12px;">⚠️ Note: Please enter your income net of tax (your actual take-home pay).</div>', unsafe_allow_html=True)
 
-    with st.expander("📥 Import Income from Excel", expanded=True):
-        st.caption("Upload your completed Master Template (Income Sheet)")
-        inc_file = st.file_uploader("Upload Income Excel", type=["xlsx","xls"], key=f"v{_v}_inc_upload")
-        if inc_file:
-            new_inc, err = import_income_from_excel(inc_file)
-            if err:
-                st.error(f"Error: {err}")
-            else:
-                st.success(f"✓ Found {len(new_inc)} income sources.")
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.button("Replace all income", key=f"v{_v}_inc_replace"):
-                        st.session_state.income = new_inc
-                        clear_asset_cache()
-                        st.rerun()
-                with c2:
-                    if st.button("Append to existing", key=f"v{_v}_inc_append"):
-                        st.session_state.income.extend(new_inc)
-                        clear_asset_cache()
-                        st.rerun()
-
     inc_df = pd.DataFrame([{
         "Source":       inc.get("name", ""),
         "Monthly":      fmt_full(inc.get("monthly", 0) or 0),
@@ -2947,27 +3026,6 @@ with tab_inc_exp:
     st.divider()
     st.markdown("### 💸 Monthly Expenses")
     st.caption(f"Total: {fmt_full(total_monthly_expense())}/month · Avg inflation: {avg_inflation():.1f}%")
-
-    with st.expander("📥 Import Expenses from Excel", expanded=True):
-        st.caption("Upload your completed Master Template (Expenses Sheet)")
-        exp_file = st.file_uploader("Upload Expenses Excel", type=["xlsx","xls"], key=f"v{_v}_exp_upload")
-        if exp_file:
-            new_exp, err = import_expenses_from_excel(exp_file)
-            if err:
-                st.error(f"Error: {err}")
-            else:
-                st.success(f"✓ Found {len(new_exp)} expenses.")
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.button("Replace all expenses", key=f"v{_v}_exp_replace"):
-                        st.session_state.expenses = new_exp
-                        clear_asset_cache()
-                        st.rerun()
-                with c2:
-                    if st.button("Append to existing", key=f"v{_v}_exp_append"):
-                        st.session_state.expenses.extend(new_exp)
-                        clear_asset_cache()
-                        st.rerun()
 
     exp_df = pd.DataFrame([{
         "Name":         e.get("name", ""),
@@ -3104,27 +3162,6 @@ with tab_inc_exp:
 with tab_goals:
     st.markdown("# 4. Goals")
     st.markdown("### 🎯 Financial Goals")
-
-    with st.expander("📥 Import Goals from Excel", expanded=True):
-        st.caption("Upload your completed Master Template (Goals Sheet)")
-        goal_file = st.file_uploader("Upload Goals Excel", type=["xlsx","xls"], key=f"v{_v}_goal_upload")
-        if goal_file:
-            new_goals, err = import_goals_from_excel(goal_file)
-            if err:
-                st.error(f"Error reading file: {err}")
-            else:
-                st.success(f"✓ Found {len(new_goals)} goals. Choose action:")
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    if st.button("Replace all goals", key=f"v{_v}_goal_replace"):
-                        st.session_state.goals = new_goals
-                        clear_asset_cache()
-                        st.rerun()
-                with col_b:
-                    if st.button("Append to existing", key=f"v{_v}_goal_append"):
-                        st.session_state.goals.extend(new_goals)
-                        clear_asset_cache()
-                        st.rerun()
 
     goals_df = pd.DataFrame([{
         "Goal Name":       g.get("name", ""),
@@ -3325,33 +3362,6 @@ with tab_assets:
     st.markdown("### 📈 Asset Portfolio")
     st.caption(f"Total Assets: {fmt_full(total_assets())} · Weighted CAGR: {weighted_cagr():.1f}%")
 
-    with st.expander("📥 Import Assets from Excel", expanded=True):
-        st.caption("Upload your completed Master Template (Assets Sheet)")
-        asset_file = st.file_uploader("Upload Assets Excel", type=["xlsx","xls"], key=f"v{_v}_asset_upload")
-        if asset_file:
-            new_assets, defaulted_cagr_list, err = import_assets_from_excel(asset_file)
-            if err:
-                st.error(f"Error reading file: {err}")
-            else:
-                st.success(f"✓ Found {len(new_assets)} assets. Choose action:")
-                if defaulted_cagr_list:
-                    names_str = ", ".join(f"{n} ({c}: {cg:.1f}%)" for n, c, cg in defaulted_cagr_list)
-                    st.warning(
-                        f"⚠️ {len(defaulted_cagr_list)} asset(s) had no CAGR in the file — a "
-                        f"class-based default will be applied: {names_str}"
-                    )
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    if st.button("Replace all assets", key=f"v{_v}_asset_replace"):
-                        st.session_state.assets = new_assets
-                        st.session_state["_cagr_defaults_applied"] = defaulted_cagr_list
-                        st.session_state.data_version += 1; st.rerun()
-                with col_b:
-                    if st.button("Append to existing", key=f"v{_v}_asset_append"):
-                        st.session_state.assets.extend(new_assets)
-                        st.session_state["_cagr_defaults_applied"] = defaulted_cagr_list
-                        st.session_state.data_version += 1; st.rerun()
-
     gnames = goal_names()
 
     assets_data = []
@@ -3489,25 +3499,6 @@ with tab_liab:
     st.caption("Track your outstanding debt. This automatically reduces your projected Net Worth over time.")
     st.info("💡 **Cashflow Note:** Since you already log your loan EMIs in the **Expenses** tab, this section purely tracks your principal burndown to calculate an accurate Net Worth projection. It does not alter your monthly surplus.")
 
-    with st.expander("📥 Import Liabilities from Excel", expanded=True):
-        st.caption("Upload your completed Master Template (Liabilities Sheet)")
-        liab_file = st.file_uploader("Upload Liabilities Excel", type=["xlsx","xls"], key=f"v{_v}_liab_upload")
-        if liab_file:
-            new_liab, err = import_liabilities_from_excel(liab_file)
-            if err:
-                st.error(f"Error: {err}")
-            else:
-                st.success(f"✓ Found {len(new_liab)} liabilities.")
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.button("Replace all liabilities", key=f"v{_v}_liab_replace"):
-                        st.session_state.liabilities = new_liab
-                        st.rerun()
-                with c2:
-                    if st.button("Append to existing", key=f"v{_v}_liab_append"):
-                        st.session_state.liabilities.extend(new_liab)
-                        st.rerun()
-
     liab_df = pd.DataFrame([{
         "Loan Name":             l.get("name", ""),
         "Outstanding Principal": fmt_full(l.get("principal", 0) or 0),
@@ -3552,7 +3543,7 @@ with tab_retire:
     retire_goals= [g for g in all_goals if "retire" in g.get("name","").lower() or "pension" in g.get("name","").lower()]
 
     if not goal_options:
-        st.warning("⚠️ Please add at least one goal in the 'Goals' tab first to unlock the Retirement Planner.")
+        st.warning("⚠️ Please add at least one goal via Excel in the 'Goals' tab first to unlock the Retirement Planner.")
     else:
         col_cfg, col_info = st.columns([1,1])
         with col_cfg:
