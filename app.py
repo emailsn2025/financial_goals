@@ -2404,10 +2404,6 @@ with tab_settings:
         btn_col1, btn_col2, btn_col3 = st.columns(3)
         
         with btn_col1:
-            if st.download_button("⬇️ Download Data", data=json.dumps(export_data, indent=2), file_name="financial_planner_data.json", mime="application/json", use_container_width=True, key="download_json_settings"):
-                st.toast("✅ Save file downloaded successfully!")
-                
-        with btn_col2:
             if st.session_state.get("_pending_load"):
                 if st.button("✅ Apply Loaded", use_container_width=True, type="primary", key="apply_json_settings"):
                     d = st.session_state.pop("_pending_load")
@@ -2430,7 +2426,13 @@ with tab_settings:
             else:
                 # Disabled placeholder to keep the 3-tile grid shape intact
                 st.button("✅ Apply Loaded", disabled=True, use_container_width=True, key="apply_json_disabled")
+            
+        
+        with btn_col2:
+            if st.download_button("⬇️ Download Data", data=json.dumps(export_data, indent=2), file_name="financial_planner_data.json", mime="application/json", use_container_width=True, key="download_json_settings"):
+                st.toast("✅ Save file downloaded successfully!")
                 
+                        
         with btn_col3:
             if st.button("🔄 Reset Data", use_container_width=True, key="reset_json_settings"):
                 for k in ["income","expenses","goals","assets","liabilities"]: st.session_state[k] = []
