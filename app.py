@@ -1700,19 +1700,42 @@ def _fig_to_pdf_image(fig, width_cm=25, height_cm=9.5, name="chart", errors=None
     if fig is None:
         return None
     try:
-        import kaleido  # Check if kaleido exists before attempting export
         fig = go.Figure(fig)
         fig.update_layout(paper_bgcolor="white", plot_bgcolor="white", font=dict(color="#1e293b"))
-        png_bytes = fig.to_image(format="png", width=1500, height=int(1500 * height_cm / width_cm), scale=2, engine="kaleido")
-        return RLImage(io.BytesIO(png_bytes), width=width_cm*cm, height=height_cm*cm)
-    except ImportError:
-        if errors is not None:
-            errors.append((name, "Kaleido package is not installed. Run 'pip install kaleido' to enable chart images in PDF."))
-        return None
+        
+        # Explicitly instruct Plotly to use kaleido
+        png_bytes = fig.to_image(
+            format="png", 
+            width=1500, 
+            height=int(1500 * height_cm / width_cm), 
+            scale=2, 
+            engine="kaleido"
+        )
+        return RLImage(io.BytesIO(png_bytes), width=width_cm * cm, height=height_cm * cm)
+
     except Exception as e:
+        err_str = str(e)
         if errors is not None:
-            errors.append((name, f"{type(e).__name__}: {e}"))
-        return None
+            errors.append((name, err_str))
+            
+        # Draw a fallback placeholder cell in the PDF so layout remains intact
+        placeholder = (
+            f"<para align='center'>"
+            f"<font color='#64748b' size=9><b>[{name}]</b><br/>"
+            f"Chart preview unavailable in cloud environment.</font>"
+            f"</para>"
+        )
+        fallback_box = Table(
+            [[Paragraph(placeholder, getSampleStyleSheet()['Normal'])]], 
+            colWidths=[width_cm * cm], 
+            rowHeights=[height_cm * cm]
+        )
+        fallback_box.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f8fafc')),
+            ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#cbd5e1')),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        return fallback_box
 
 def generate_full_pdf_report():
     buffer = io.BytesIO()
