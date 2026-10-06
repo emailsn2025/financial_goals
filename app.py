@@ -1735,11 +1735,16 @@ def _fig_to_pdf_image(fig, width_cm=25, height_cm=9.5, name="chart", errors=None
     if fig is None:
         return None
     try:
-        configure_chrome_path()  # Ensure paths are set before export
         fig = go.Figure(fig)
         fig.update_layout(paper_bgcolor="white", plot_bgcolor="white", font=dict(color="#1e293b"))
-        png_bytes = fig.to_image(format="png", width=1500, height=int(1500 * height_cm / width_cm), scale=2, engine="kaleido")
-        return RLImage(io.BytesIO(png_bytes), width=width_cm*cm, height=height_cm*cm)
+        png_bytes = fig.to_image(
+            format="png", 
+            width=1500, 
+            height=int(1500 * height_cm / width_cm), 
+            scale=2, 
+            engine="kaleido"
+        )
+        return RLImage(io.BytesIO(png_bytes), width=width_cm * cm, height=height_cm * cm)
     except Exception as e:
         if errors is not None:
             errors.append((name, f"{type(e).__name__}: {e}"))
