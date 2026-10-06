@@ -9,6 +9,7 @@ import base64
 import os
 import io
 import zipfile
+import shutil
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib import colors
 from reportlab.lib.units import cm
@@ -16,6 +17,40 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image as RLImage
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
 from reportlab.graphics.shapes import Drawing, Rect, String
+
+# ══════════════════════════════════════════════════════
+# CONFIGURE CHROMIUM / CHROME PATH FOR KALEIDO & PLOTLY
+# ══════════════════════════════════════════════════════
+def configure_chrome_path():
+    chrome_path = (
+        shutil.which("google-chrome") or
+        shutil.which("chromium") or
+        shutil.which("chromium-browser") or
+        "/usr/bin/chromium" or
+        "/usr/bin/chromium-browser"
+    )
+    if chrome_path:
+        os.environ["PLOTLY_CHROME_PATH"] = str(chrome_path)
+        os.environ["KALEIDO_CHROME_PATH"] = str(chrome_path)
+
+        # Also create a user-space symlink named 'google-chrome'
+        # so Kaleido's hardcoded check succeeds
+        if not shutil.which("google-chrome"):
+            local_bin = os.path.expanduser("~/.local/bin")
+            os.makedirs(local_bin, exist_ok=True)
+            symlink_target = os.path.join(local_bin, "google-chrome")
+            if not os.path.exists(symlink_target):
+                try:
+                    os.symlink(chrome_path, symlink_target)
+                except OSError:
+                    pass
+            if local_bin not in os.environ.get("PATH", ""):
+                os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
+
+configure_chrome_path()
+
+# Continue with your existing code:
+st.set_page_config(page_title="Net Worth & Goal Planner", page_icon="📊", layout="wide")
 
 st.set_page_config(page_title="Net Worth & Goal Planner", page_icon="📊", layout="wide")
 
@@ -1700,23 +1735,15 @@ def _fig_to_pdf_image(fig, width_cm=25, height_cm=9.5, name="chart", errors=None
     if fig is None:
         return None
     try:
+        configure_chrome_path()  # Ensure paths are set before export
         fig = go.Figure(fig)
         fig.update_layout(paper_bgcolor="white", plot_bgcolor="white", font=dict(color="#1e293b"))
-        
-        # Explicitly instruct Plotly to use kaleido
-        png_bytes = fig.to_image(
-            format="png", 
-            width=1500, 
-            height=int(1500 * height_cm / width_cm), 
-            scale=2, 
-            engine="kaleido"
-        )
-        return RLImage(io.BytesIO(png_bytes), width=width_cm * cm, height=height_cm * cm)
-
+        png_bytes = fig.to_image(format="png", width=1500, height=int(1500 * height_cm / width_cm), scale=2, engine="kaleido")
+        return RLImage(io.BytesIO(png_bytes), width=width_cm*cm, height=height_cm*cm)
     except Exception as e:
-        err_str = str(e)
         if errors is not None:
-            errors.append((name, err_str))
+            errors.append((name, f"{type(e).__name__}: {e}"))
+        return None
             
         # Draw a fallback placeholder cell in the PDF so layout remains intact
         placeholder = (
